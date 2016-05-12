@@ -146,7 +146,7 @@ def index():
 		terminalfilters=(gettext("Terminal Filters"), dict(template="dialogs/settings/terminalfilters.jinja2", _div="settings_terminalFilters", custom_bindings=False)),
 		gcodescripts=(gettext("GCODE Scripts"), dict(template="dialogs/settings/gcodescripts.jinja2", _div="settings_gcodeScripts", custom_bindings=False)),
 		firmwareUpdate=(gettext("Firmware Update"), dict(template="dialogs/settings/firmwareUpdate.jinja2", _div="settings_firmwareUpdate", custom_bindings=False)),
-		staticNetwork=(gettext("Network"), dict(template="dialogs/settings/network.jinja2", _div="settings_network", custom_bindings=False)),
+		#lkj staticNetwork=(gettext("Network"), dict(template="dialogs/settings/network.jinja2", _div="settings_network", custom_bindings=False)),
 
 		section_features=(gettext("Features"), None),
 
@@ -156,7 +156,7 @@ def index():
 
 		section_octoprint=(gettext("OctoPrint"), None),
 
-		#folders=(gettext("Folders"), dict(template="dialogs/settings/folders.jinja2", _div="settings_folders", custom_bindings=False)),
+		#lkj folders=(gettext("Folders"), dict(template="dialogs/settings/folders.jinja2", _div="settings_folders", custom_bindings=False)),
 		appearance=(gettext("Appearance"), dict(template="dialogs/settings/appearance.jinja2", _div="settings_appearance", custom_bindings=False)),
 		logs=(gettext("Logs"), dict(template="dialogs/settings/logs.jinja2", _div="settings_logs")),
 		#lkj server=(gettext("Server"), dict(template="dialogs/settings/server.jinja2", _div="settings_server", custom_bindings=False)),

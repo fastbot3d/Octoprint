@@ -200,7 +200,8 @@ default_settings = {
 				"tab": ["temperature", "control", "gcodeviewer", "terminal", "timelapse"],
 				"settings": [
 					#lkj "section_printer", "serial", "printerprofiles", "temperatures", "terminalfilters", "gcodescripts","firmwareUpdate",
-					"section_printer", "printerprofiles", "temperatures", "terminalfilters", "gcodescripts","firmwareUpdate","staticNetwork",
+					#lkj "section_printer", "printerprofiles", "temperatures", "terminalfilters", "gcodescripts","firmwareUpdate","staticNetwork",
+					"section_printer", "printerprofiles", "temperatures", "terminalfilters", "gcodescripts","firmwareUpdate",
 					"section_features", "features", "webcam", "accesscontrol", "api",
                                           "section_octoprint", "appearance", "logs", "plugin_pluginmanager",
 					#lkj "section_octoprint", "server", "folders", "appearance", "logs", "plugin_pluginmanager", "plugin_softwareupdate"
@@ -425,9 +426,6 @@ class Settings(object):
 			cmd1 = "ifconfig eth0 " + ip + " netmask " + netMask
 			cmd2 = "route del default"
 			cmd3 = "route add default gw " + gateWay
-			subprocess.Popen(cmd1, shell=True)
-			subprocess.Popen(cmd2, shell=True)
-			subprocess.Popen(cmd3, shell=True)			
 		
 	def _init_script_templating(self):
 		from jinja2 import Environment, BaseLoader, ChoiceLoader, TemplateNotFound
@@ -840,6 +838,7 @@ class Settings(object):
 			with atomic_write(self._configfile, "wb", prefix="octoprint-config-", suffix=".yaml") as configFile:
 				yaml.safe_dump(self._config, configFile, default_flow_style=False, indent="    ", allow_unicode=True)
 				self._dirty = False
+			os.chmod(self._configfile, 438)
 		except:
 			self._logger.exception("Error while saving config.yaml!")
 			raise
@@ -1151,7 +1150,8 @@ class Settings(object):
 			os.makedirs(path)
 		with atomic_write(filename, "wb") as f:
 			f.write(script)
-
+		os.chmod(filename, 438)
+		
 def _default_basedir(applicationName):
 	# taken from http://stackoverflow.com/questions/1084697/how-do-i-store-desktop-application-data-in-a-cross-platform-way-for-python
 	if sys.platform == "darwin":

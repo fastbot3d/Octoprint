@@ -471,9 +471,13 @@ $(function() {
                         newSrc += "?";
                     }
                     newSrc += new Date().getTime();
-
+		    
+		   var url = window.location.href; //lkj
+		   url = url.substring(0, url.lastIndexOf('/'));
+		   url += newSrc; 		  
+		    
                     self.updateRotatorWidth();
-                    webcamImage.attr("src", newSrc);
+                    webcamImage.attr("src", url);
                 }
             } else if (previous == "#control") {
                 // only disable webcam stream if tab is out of focus for more than 5s, otherwise we might cause

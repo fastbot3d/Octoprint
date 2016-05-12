@@ -161,7 +161,7 @@ def performSystemAction():
 					# we run this with shell=True since we have to trust whatever
 					# our admin configured as command and since we want to allow
 					# shell-alike handling here...
-					p = sarge.run(availableAction["command"], stderr=sarge.Capture(), shell=True, async=async)
+					p = sarge.run(availableAction["command"], stderr=sarge.Capture(), shell=False, async=async)
 					if not async:
 						if not ignore and p.returncode != 0:
 							returncode = p.returncode

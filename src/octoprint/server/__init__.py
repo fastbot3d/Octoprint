@@ -150,14 +150,11 @@ class Server():
 		import sys
 
 		debug = self._debug
-		
 		import subprocess
-		cmd1 = "/usr/bin/reset_user_info.sh"
-		subprocess.Popen(cmd1, shell=True)    
-		cmd2 = "echo heartbeat > /sys/class/leds/usr1/trigger"
-		subprocess.Popen(cmd2, shell=True)
-		import time
-		time.sleep(0.5)			
+		cmd1 = "/system/bin/reset_user_info.sh"
+		subprocess.Popen(cmd1, shell=False)    
+		cmd2 = "/system/bin/write_heart.sh"
+		subprocess.Popen(cmd2, shell=False)					
 
 		# first initialize the settings singleton and make sure it uses given configfile and basedir if available
 		s = settings(init=True, basedir=self._basedir, configfile=self._configfile)

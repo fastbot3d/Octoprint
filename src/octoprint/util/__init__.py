@@ -21,15 +21,6 @@ import contextlib
 
 logger = logging.getLogger(__name__)
 
-
-def recursive_file_permissions(path,mode):
-	for root, dirs, files in os.walk(path):  
-		for momo in dirs:  
-			os.chmod(os.path.join(root, momo), mode)
-		for momo in files:
-			os.chmod(os.path.join(root, momo), mode)
-		
-
 def warning_decorator_factory(warning_type):
 	def specific_warning(message, stacklevel=1, since=None, includedoc=None, extenddoc=False):
 		def decorator(func):
