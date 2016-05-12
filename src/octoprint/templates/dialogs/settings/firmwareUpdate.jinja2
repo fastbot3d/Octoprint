@@ -1,0 +1,51 @@
+<form class="form-horizontal">
+       <strong>{{ _('Firmware Version:')}} </strong>  <strong data-bind="text:fastbot_firmwareVersion"></strong>
+
+    <div class="row-fluid">
+	<div id="firmware_upload_progress" class="progress" style="width: 30%;">
+		<div class="bar" style="width: 0%; color:blue;"></div>
+	</div>
+	<strong style="color:red;">Note: System will reboot after firmware upload</strong><br>
+
+	<span class="btn pull-right fileinput-button span12" style="width: 25%; ">
+	    <i class="icon-upload-alt icon-white"></i>
+	    <span>{{ _('Update firmware') }}</span>
+	  <!--  <input id="fastbot_firmware_upload" type="file" name="file" class="fileinput-button">  -->
+	    <input id="fastbot_firmware_upload" type="file" name="file" data-bind="enable: loginState.isUser() && printerState.isOperational()" class="fileinput-button">
+	  
+
+	</span>
+    </div>
+	<div >
+		<div class="row-fluid">
+		    <div class="span4"><h4>{{ _('Temperature curve ') }}</h4></div>
+		</div>
+			
+		<div class="row-fluid" style="margin-bottom: 5px">
+		    <label class="span3" ><h5>{{ _('Extruder1:') }}</h5></label>			    
+		     <div class="controls">			    
+		     <span class="btn fileinput-button span12" data-bind="css: {disabled: !$root.loginState.isUser()}" style="width: 25%; ">
+		        <span>{{ _('Upload') }}</span>
+		        <input id="extruder1_curve_upload" type="file" name="file" class="fileinput-button" data-bind="enable: loginState.isUser() && printerState.isOperational()" >
+		    </span>			
+		    </div>
+		</div>
+		<div class="row-fluid" style="margin-bottom: 5px">
+		    <label class="span3" ><h5>{{ _('Extruder2:') }}</h5></label>			    
+		     <div class="controls">			    
+			<span class="btn fileinput-button span12" data-bind="css: {disabled: !$root.loginState.isUser()}" style="width: 25%; ">
+			    <span>{{ _('Upload') }}</span>
+			    <input id="extruder2_curve_upload" type="file" name="file" class="fileinput-button" data-bind="enable: loginState.isUser() && printerState.isOperational()" >
+			</span>			    </div>
+		</div>
+		<div class="row-fluid" style="margin-bottom: 5px">
+		    <label class="span3" ><h5>{{ _('Bed:') }}</h5></label>			    
+		     <div class="controls">			    
+			<span class="btn fileinput-button span12" data-bind="css: {disabled: !$root.loginState.isUser()}" style="width: 25%; ">
+			    <span>{{ _('Upload') }}</span>
+			    <input id="bed_curve_upload" type="file" name="file" class="fileinput-button" data-bind="enable: loginState.isUser() && printerState.isOperational()" >
+			</span>	
+		    </div>
+		</div>	
+	</div>
+</form>

@@ -1,406 +1,771 @@
-function GcodeFilesViewModel(printerStateViewModel, loginStateViewModel, slicingViewModel) {
-    var self = this;
+$(function() {
+    function GcodeFilesViewModel(parameters) {
+        var self = this;
 
-    self.printerState = printerStateViewModel;
-    self.loginState = loginStateViewModel;
-    self.slicing = slicingViewModel;
+        self.settingsViewModel = parameters[0];
+        self.loginState = parameters[1];
+        self.printerState = parameters[2];
+        self.slicing = parameters[3];
 
-    self.isErrorOrClosed = ko.observable(undefined);
-    self.isOperational = ko.observable(undefined);
-    self.isPrinting = ko.observable(undefined);
-    self.isPaused = ko.observable(undefined);
-    self.isError = ko.observable(undefined);
-    self.isReady = ko.observable(undefined);
-    self.isLoading = ko.observable(undefined);
-    self.isSdReady = ko.observable(undefined);
+        self.isErrorOrClosed = ko.observable(undefined);
+        self.isOperational = ko.observable(undefined);
+        self.isPrinting = ko.observable(undefined);
+        self.isPaused = ko.observable(undefined);
+        self.isError = ko.observable(undefined);
+        self.isReady = ko.observable(undefined);
+        self.isLoading = ko.observable(undefined);
+        self.isSdReady = ko.observable(undefined);
 
-    self.searchQuery = ko.observable(undefined);
-    self.searchQuery.subscribe(function() {
-        self.performSearch();
-    });
+        self.searchQuery = ko.observable(undefined);
+        self.searchQuery.subscribe(function() {
+            self.performSearch();
+        });
 
-    self.freeSpace = ko.observable(undefined);
-    self.freeSpaceString = ko.computed(function() {
-        if (!self.freeSpace())
-            return "-";
-        return formatSize(self.freeSpace());
-    });
-    
-    self.sdFreeSpace = ko.observable(undefined);
-    self.sdFreeSpaceString = ko.computed(function() {
-        if (!self.sdFreeSpace())
-            return "-";
-        return formatSize(self.sdFreeSpace());
-    });
+        self.freeSpace = ko.observable(undefined);
+        self.totalSpace = ko.observable(undefined);
+        self.freeSpaceString = ko.computed(function() {
+            if (!self.freeSpace())
+                return "-";
+            return formatSize(self.freeSpace());
+        });
+        self.totalSpaceString = ko.computed(function() {
+            if (!self.totalSpace())
+                return "-";
+            return formatSize(self.totalSpace());
+        });
+	
+	//lkj
+	self.sdFreeSpace = ko.observable(undefined);
+	self.sdTotalSpace = ko.observable(undefined);
+	self.sdFreeSpaceString = ko.computed(function() {
+	    if (!self.sdFreeSpace())
+		return "-";
+	    return formatSize(self.sdFreeSpace());
+	});
+	self.sdTotalSpaceString = ko.computed(function() {
+	    if (!self.sdTotalSpace())
+		return "-";
+	    return formatSize(self.sdTotalSpace());
+	});	
 
-    // initialize list helper
-    self.listHelper = new ItemListHelper(
-        "gcodeFiles",
-        {
-            "name": function(a, b) {
-                // sorts ascending
-                if (a["name"].toLocaleLowerCase() < b["name"].toLocaleLowerCase()) return -1;
-                if (a["name"].toLocaleLowerCase() > b["name"].toLocaleLowerCase()) return 1;
-                return 0;
-            },
-            "upload": function(a, b) {
-                // sorts descending
-                if (b["date"] === undefined || a["date"] > b["date"]) return -1;
-                if (a["date"] < b["date"]) return 1;
-                return 0;
-            },
-            "size": function(a, b) {
-                // sorts descending
-                if (b["bytes"] === undefined || a["bytes"] > b["bytes"]) return -1;
-                if (a["bytes"] < b["bytes"]) return 1;
-                return 0;
-            }
-        },
-        {
-            "printed": function(file) {
-                return !(file["prints"] && file["prints"]["success"] && file["prints"]["success"] > 0);
-            },
-            "sd": function(file) {
-                return file["origin"] && file["origin"] == "fbotSdcard";
-            },
-            "local": function(file) {
-                return (file["origin"] && file["origin"] == "local");
-            },
-            /*lkj "sd": function(file) {
-                return file["origin"] && file["origin"] == "sdcard";
-            },
-            "local": function(file) {
-                return !(file["origin"] && file["origin"] == "sdcard");
-            },*/
-            "machinecode": function(file) {
-                return file["type"] && file["type"] == "machinecode";
-            },
-            "model": function(file) {
-                return file["type"] && file["type"] == "model";
-            }
-        },
-        "name",
-        ["machinecode"],
-        [["sd", "local"], ["machinecode", "model"]],
-        0
-    );
-
-    self.isLoadActionPossible = ko.computed(function() {
-        return self.loginState.isUser() && !self.isPrinting() && !self.isPaused() && !self.isLoading();
-    });
-
-    self.isLoadAndPrintActionPossible = ko.computed(function() {
-        return self.loginState.isUser() && self.isOperational() && self.isLoadActionPossible();
-    });
-
-    self.printerState.filename.subscribe(function(newValue) {
-        self.highlightFilename(newValue);
-    });
-
-    self.highlightFilename = function(filename) {
-        if (filename == undefined) {
-            self.listHelper.selectNone();
-        } else {
-            self.listHelper.selectItem(function(item) {
-                return item.name == filename;
-            });
-        }
-    };
-
-    self.fromCurrentData = function(data) {
-        self._processStateData(data.state);
-    };
-
-    self.fromHistoryData = function(data) {
-        self._processStateData(data.state);
-    };
-
-    self._processStateData = function(data) {
-        self.isErrorOrClosed(data.flags.closedOrError);
-        self.isOperational(data.flags.operational);
-        self.isPaused(data.flags.paused);
-        self.isPrinting(data.flags.printing);
-        self.isError(data.flags.error);
-        self.isReady(data.flags.ready);
-        self.isLoading(data.flags.loading);
-        self.isSdReady(data.flags.sdReady);
-    };
-
-    self._otherRequestInProgress = false;
-    self.requestData = function(filenameToFocus, locationToFocus) {
-        if (self._otherRequestInProgress) return;
-                   
-         //alert("file.js API_BASEURL=" + API_BASEURL );
-
-        //alert("file.js requestData filenameToFocus=" + filenameToFocus + ",locationToFocus" + locationToFocus);
-        var location_url = API_BASEURL + "files" +"/" +locationToFocus;
-        if (locationToFocus === undefined) {
-            location_url = API_BASEURL + "files";
-        }
-        self._otherRequestInProgress = true;
-        $.ajax({
-            url: location_url,
-            //lkj url: API_BASEURL + "files" +"/" +locationToFocus,
-            method: "GET",
-            dataType: "json",
-            success: function(response) {
-                self.fromResponse(response, filenameToFocus, locationToFocus);
-                self._otherRequestInProgress = false;
-            },
-            error: function() {
-                self._otherRequestInProgress = false;
+        self.diskusageWarning = ko.computed(function() {
+            return self.freeSpace() != undefined
+                && self.freeSpace() < self.settingsViewModel.server_diskspace_warning();
+        });
+        self.diskusageCritical = ko.computed(function() {
+            return self.freeSpace() != undefined
+                && self.freeSpace() < self.settingsViewModel.server_diskspace_critical();
+        });
+        self.diskusageString = ko.computed(function() {
+            if (self.diskusageCritical()) {
+                return gettext("Your available free disk space is critically low.");
+            } else if (self.diskusageWarning()) {
+                return gettext("Your available free disk space is starting to run low.");
+            } else {
+                return gettext("Your current disk usage.");
             }
         });
-    };
 
-    self.fromResponse = function(response, filenameToFocus, locationToFocus) {
-        var files = response.files;
-        _.each(files, function(element, index, list) {
-            if (!element.hasOwnProperty("size")) element.size = undefined;
-            if (!element.hasOwnProperty("date")) element.date = undefined;
+        self.uploadButton = undefined;
+	self.fastbot_firmware_upload = undefined; 
+	
+        // initialize list helper
+        self.listHelper = new ItemListHelper(
+            "gcodeFiles",
+            {
+                "name": function(a, b) {
+                    // sorts ascending
+                    if (a["name"].toLocaleLowerCase() < b["name"].toLocaleLowerCase()) return -1;
+                    if (a["name"].toLocaleLowerCase() > b["name"].toLocaleLowerCase()) return 1;
+                    return 0;
+                },
+                "upload": function(a, b) {
+                    // sorts descending
+                    if (b["date"] === undefined || a["date"] > b["date"]) return -1;
+                    if (a["date"] < b["date"]) return 1;
+                    return 0;
+                },
+                "size": function(a, b) {
+                    // sorts descending
+                    if (b["size"] === undefined || a["size"] > b["size"]) return -1;
+                    if (a["size"] < b["size"]) return 1;
+                    return 0;
+                }
+            },
+            {
+                "printed": function(file) {
+                    return !(file["prints"] && file["prints"]["success"] && file["prints"]["success"] > 0);
+                },
+		"sd": function(file) {
+		    return file["origin"] && file["origin"] == "fbotSdcard";
+		},
+		"local": function(file) {
+		    return (file["origin"] && file["origin"] == "local");
+		}
+		/*lkj
+                "sd": function(file) {
+                    return file["origin"] && file["origin"] == "sdcard";
+                },
+                "local": function(file) {
+                    return !(file["origin"] && file["origin"] == "sdcard");
+                }*/
+		,
+                "machinecode": function(file) {
+                    return file["type"] && file["type"] == "machinecode";
+                },
+                "model": function(file) {
+                    return file["type"] && file["type"] == "model";
+                }
+            },
+            "name",
+            [],
+            [["sd", "local"], ["machinecode", "model"]],
+            0
+        );
+
+        self.isLoadActionPossible = ko.computed(function() {
+            return self.loginState.isUser() && !self.isPrinting() && !self.isPaused() && !self.isLoading();
         });
-        self.listHelper.updateItems(files);
-        if (filenameToFocus) {
-            // got a file to scroll to
-            if (locationToFocus === undefined) {
-                locationToFocus = "local";
+
+        self.isLoadAndPrintActionPossible = ko.computed(function() {
+            return self.loginState.isUser() && self.isOperational() && self.isLoadActionPossible();
+        });
+
+        self.printerState.filename.subscribe(function(newValue) {
+            self.highlightFilename(newValue);
+        });
+
+        self.highlightFilename = function(filename) {
+            if (filename == undefined) {
+                self.listHelper.selectNone();
+            } else {
+                self.listHelper.selectItem(function(item) {
+                    return item.name == filename;
+                });
             }
-            var entryElement = self.getEntryElement({name: filenameToFocus, origin: locationToFocus});
-            if (entryElement) {
-                var entryOffset = entryElement.offsetTop;
-                $(".gcode_files").slimScroll({ scrollTo: entryOffset + "px" });
-            }
-        }
-        if (response.free) {
-            self.freeSpace(response.free);
-            self.sdFreeSpace(response.sdFree);
-        }
-        self.highlightFilename(self.printerState.filename());
-    };
+        };
 
-    self.loadFile = function(file, printAfterLoad) {
-        if (!file || !file.refs || !file.refs.hasOwnProperty("resource")) return;
+        self.fromCurrentData = function(data) {
+            self._processStateData(data.state);
+        };
 
-        $.ajax({
-            url: file.refs.resource,
-            type: "POST",
-            dataType: "json",
-            contentType: "application/json; charset=UTF-8",
-            data: JSON.stringify({command: "select", print: printAfterLoad})
-        });
-    };
+        self.fromHistoryData = function(data) {
+            self._processStateData(data.state);
+        };
 
-    self.removeFile = function(file) {
-        if (!file || !file.refs || !file.refs.hasOwnProperty("resource")) return;
+        self._processStateData = function(data) {
+            self.isErrorOrClosed(data.flags.closedOrError);
+            self.isOperational(data.flags.operational);
+            self.isPaused(data.flags.paused);
+            self.isPrinting(data.flags.printing);
+            self.isError(data.flags.error);
+            self.isReady(data.flags.ready);
+            self.isLoading(data.flags.loading);
+            self.isSdReady(data.flags.sdReady);
+        };
 
-        $.ajax({
-            url: file.refs.resource,
-            type: "DELETE",
-            success: function() {
-                self.requestData();
-            }
-        });
-    };
-
-    self.sliceFile = function(file) {
-        if (!file) return;
-
-        self.slicing.show(file.origin, file.name);
-    };
-
-    self.initSdCard = function() {
-        self._sendSdCommand("init");
-    };
-
-    self.releaseSdCard = function() {
-        self._sendSdCommand("release");
-    };
-
-    self.refreshSdFiles = function() {
-        self._sendSdCommand("refresh");
-    };
-
-    self._sendSdCommand = function(command) {
-        $.ajax({
-            url: API_BASEURL + "printer/sd",
-            type: "POST",
-            dataType: "json",
-            contentType: "application/json; charset=UTF-8",
-            data: JSON.stringify({command: command})
-        });
-    };
-
-    self.downloadLink = function(data) {
-        if (data["refs"] && data["refs"]["download"]) {
-            return data["refs"]["download"];
-        } else {
-            return false         
-        }
-    };
-    
-    self.downloadLinkLKJ = function(data) {
-        //alert("lkj downloadLinkLKJ, data2=" + data["origin"] );
-        if (data["refs"] && data["refs"]["download"]  && data["origin"] == "local") {
-            return data["refs"]["download"];
-        } else if (data["refs"] && data["refs"]["download"]  && data["origin"] == "fbotSdcard") {
-            return "/downloadSD" + "?filename=" + data["name"]
-        }
-    };
-    
-    /*
-    self.downloadLinkSD = function(data) {
-    //alert("lkj downloadLink, data2=" + data["origin"] )
-    
-        if (data["name"]) {      
-            var data2 = {
-                 "filename": data["name"]
-             };                
-             data2["origin"] = data["origin"]
+        self._otherRequestInProgress = false;
+        self.requestData = function(filenameToFocus, locationToFocus) {
+            if (self._otherRequestInProgress) return;
+   
+	   //lkj alert("file.js requestData filenameToFocus=" + filenameToFocus + ",locationToFocus" + locationToFocus);
+	   var location_url = API_BASEURL + "files" +"/" +locationToFocus;
+	   if (locationToFocus === undefined) {
+	       location_url = API_BASEURL + "files";
+	   }
+            self._otherRequestInProgress = true;
             $.ajax({
-                url: "127.0.0.1/" + "downloadSD" ,
-                type: "GET",
+	        url: location_url,
+                //url: API_BASEURL + "files",
+                method: "GET",
                 dataType: "json",
-                contentType: "application/json; charset=UTF-8",
-                data: JSON.stringify(data2)
+                success: function(response) {
+                    self.fromResponse(response, filenameToFocus, locationToFocus);
+                    self._otherRequestInProgress = false;
+                },
+                error: function() {
+                    self._otherRequestInProgress = false;
+                }
             });
-        }
-    };
-        
-    self.isDownLoadSDFile = function(data) {
-        alert("lkj isDownLoadSDFile, data=" + data["origin"] )
-        if (data["origin"] && data["origin"] == "local") {
-            return false;
-        } else {
-            return true;
-        }
-    };
-    
-    self.downLoadSDFile = function(data) {
-        alert("lkj downLoadSDFile, data=" + data["origin"] )
-        if (data["origin"] && data["origin"] == "local") {
-            return false;
-        } else {
-            return true;
-        }
-    };
-*/
-    self.lastTimePrinted = function(data) {
-        if (data["prints"] && data["prints"]["last"] && data["prints"]["last"]["date"]) {
-            return data["prints"]["last"]["date"];
-        } else {
-            return "-";
-        }
-    };
+        };
 
-    self.getSuccessClass = function(data) {
-        if (!data["prints"] || !data["prints"]["last"]) {
-            return "";
-        }
-        return data["prints"]["last"]["success"] ? "text-success" : "text-error";
-    };
+        self.fromResponse = function(response, filenameToFocus, locationToFocus) {
+            var files = response.files;
+            _.each(files, function(element, index, list) {
+                if (!element.hasOwnProperty("size")) element.size = undefined;
+                if (!element.hasOwnProperty("date")) element.date = undefined;
+            });
+            self.listHelper.updateItems(files);
 
-    self.templateFor = function(data) {
-        return "files_template_" + data.type;
-    };
-
-    self.getEntryId = function(data) {
-        return "gcode_file_" + md5(data["origin"] + ":" + data["name"]);
-    };
-
-    self.getEntryElement = function(data) {
-        var entryId = self.getEntryId(data);
-        var entryElements = $("#" + entryId);
-        if (entryElements && entryElements[0]) {
-            return entryElements[0];
-        } else {
-            return undefined;
-        }
-    };
-
-    self.enableRemove = function(data) {
-        return self.loginState.isUser() && !_.contains(self.printerState.busyFiles(), data.origin + ":" + data.name);
-    };
-
-    self.enableSelect = function(data, printAfterSelect) {
-        var isLoadActionPossible = self.loginState.isUser() && self.isOperational() && !(self.isPrinting() || self.isPaused() || self.isLoading());
-        return isLoadActionPossible && !self.listHelper.isSelected(data);
-    };
-
-    self.enableSlicing = function(data) {
-        return self.loginState.isUser() && !(self.isPrinting() || self.isPaused());
-    };
-
-    self.enableAdditionalData = function(data) {
-        return data["gcodeAnalysis"] || data["prints"] && data["prints"]["last"];
-    };
-
-    self.toggleAdditionalData = function(data) {
-        var entryElement = self.getEntryElement(data);
-        if (!entryElement) return;
-
-        var additionalInfo = $(".additionalInfo", entryElement);
-        additionalInfo.slideToggle("fast", function() {
-            $(".toggleAdditionalData i", entryElement).toggleClass("icon-chevron-down icon-chevron-up");
-        });
-    };
-
-    self.getAdditionalData = function(data) {
-        var output = "";
-        if (data["gcodeAnalysis"]) {
-            if (data["gcodeAnalysis"]["filament"] && typeof(data["gcodeAnalysis"]["filament"]) == "object") {
-                var filament = data["gcodeAnalysis"]["filament"];
-                if (_.keys(filament).length == 1) {
-                    output += gettext("Filament") + ": " + formatFilament(data["gcodeAnalysis"]["filament"]["tool" + 0]) + "<br>";
-                } else if (_.keys(filament).length > 1) {
-                    for (var toolKey in filament) {
-                        if (!_.startsWith(toolKey, "tool") || !filament[toolKey] || !filament[toolKey].hasOwnProperty("length") || filament[toolKey]["length"] <= 0) continue;
-
-                        output += gettext("Filament") + " (" + gettext("Tool") + " " + toolKey.substr("tool".length) + "): " + formatFilament(filament[toolKey]) + "<br>";
-                    }
+            if (filenameToFocus) {
+                // got a file to scroll to
+                if (locationToFocus === undefined) {
+                    locationToFocus = "local";
+                }
+                var entryElement = self.getEntryElement({name: filenameToFocus, origin: locationToFocus});
+                if (entryElement) {
+                    var entryOffset = entryElement.offsetTop;
+                    $(".gcode_files").slimScroll({ scrollTo: entryOffset + "px" });
                 }
             }
-            output += gettext("Estimated Print Time") + ": " + formatDuration(data["gcodeAnalysis"]["estimatedPrintTime"]) + "<br>";
-        }
-        if (data["prints"] && data["prints"]["last"]) {
-            output += gettext("Last Printed") + ": " + formatTimeAgo(data["prints"]["last"]["date"]) + "<br>";
-            if (data["prints"]["last"]["lastPrintTime"]) {
-                output += gettext("Last Print Time") + ": " + formatDuration(data["prints"]["last"]["lastPrintTime"]);
+
+            if (response.free != undefined) {
+                self.freeSpace(response.free);
+		self.sdFreeSpace(response.sdFree);
             }
-        }
-        return output;
-    };
 
-    self.performSearch = function() {
-        var query = self.searchQuery();
-        if (query !== undefined && query.trim() != "") {
-            self.listHelper.changeSearchFunction(function(entry) {
-                return entry && entry["name"].toLocaleLowerCase().indexOf(query) > -1;
+            if (response.total != undefined) {
+                self.totalSpace(response.total);
+		self.sdTotalSpace(response.sdTotal);
+            }
+
+            self.highlightFilename(self.printerState.filename());
+        };
+
+        self.loadFile = function(file, printAfterLoad) {
+            if (!file || !file.refs || !file.refs.hasOwnProperty("resource")) return;
+
+            $.ajax({
+                url: file.refs.resource,
+                type: "POST",
+                dataType: "json",
+                contentType: "application/json; charset=UTF-8",
+                data: JSON.stringify({command: "select", print: printAfterLoad})
             });
-        } else {
-            self.listHelper.resetSearch();
-        }
-    };
+        };
 
-    self.onDataUpdaterReconnect = function() {
-        self.requestData();
-    };
+        self.removeFile = function(file) {
+            if (!file || !file.refs || !file.refs.hasOwnProperty("resource")) return;
 
-    self.onStartup = function() {
-        self.requestData();
-    };
+            $.ajax({
+                url: file.refs.resource,
+                type: "DELETE",
+                success: function() {
+                    self.requestData();
+                }
+            });
+        };
 
-    self.onUpdatedFiles = function(payload) {
-        if (payload.type == "gcode") {
+        self.sliceFile = function(file) {
+            if (!file) return;
+
+            self.slicing.show(file.origin, file.name, true);
+        };
+
+        self.initSdCard = function() {
+            self._sendSdCommand("init");
+        };
+
+        self.releaseSdCard = function() {
+            self._sendSdCommand("release");
+        };
+
+        self.refreshSdFiles = function() {
+            self._sendSdCommand("refresh");
+        };
+
+        self._sendSdCommand = function(command) {
+            $.ajax({
+                url: API_BASEURL + "printer/sd",
+                type: "POST",
+                dataType: "json",
+                contentType: "application/json; charset=UTF-8",
+                data: JSON.stringify({command: command})
+            });
+        };
+
+        self.downloadLink = function(data) {
+            if (data["refs"] && data["refs"]["download"]) {
+                return data["refs"]["download"];
+            } else {
+                return false;
+            }
+        };
+	
+	self.downloadLinkLKJ = function(data) {
+	    //alert("lkj downloadLinkLKJ, data2=" + data["origin"] );
+	    if (data["refs"] && data["refs"]["download"]  && data["origin"] == "local") {
+		return data["refs"]["download"];
+	    } else if (data["refs"] && data["refs"]["download"]  && data["origin"] == "fbotSdcard") {
+		return "/downloadSD" + "?filename=" + data["name"]
+	    }
+	};
+
+        self.lastTimePrinted = function(data) {
+            if (data["prints"] && data["prints"]["last"] && data["prints"]["last"]["date"]) {
+                return data["prints"]["last"]["date"];
+            } else {
+                return "-";
+            }
+        };
+
+        self.getSuccessClass = function(data) {
+            if (!data["prints"] || !data["prints"]["last"]) {
+                return "";
+            }
+            return data["prints"]["last"]["success"] ? "text-success" : "text-error";
+        };
+
+        self.templateFor = function(data) {
+            return "files_template_" + data.type;
+        };
+
+        self.getEntryId = function(data) {
+            return "gcode_file_" + md5(data["origin"] + ":" + data["name"]);
+        };
+
+        self.getEntryElement = function(data) {
+            var entryId = self.getEntryId(data);
+            var entryElements = $("#" + entryId);
+            if (entryElements && entryElements[0]) {
+                return entryElements[0];
+            } else {
+                return undefined;
+            }
+        };
+
+        self.enableRemove = function(data) {
+            return self.loginState.isUser() && !_.contains(self.printerState.busyFiles(), data.origin + ":" + data.name);
+        };
+
+        self.enableSelect = function(data, printAfterSelect) {
+            var isLoadActionPossible = self.loginState.isUser() && self.isOperational() && !(self.isPrinting() || self.isPaused() || self.isLoading());
+            return isLoadActionPossible && !self.listHelper.isSelected(data);
+        };
+
+        self.enableSlicing = function(data) {
+            return self.loginState.isUser() && self.slicing.enableSlicingDialog();
+        };
+
+        self.enableAdditionalData = function(data) {
+            return data["gcodeAnalysis"] || data["prints"] && data["prints"]["last"];
+        };
+
+        self.toggleAdditionalData = function(data) {
+            var entryElement = self.getEntryElement(data);
+            if (!entryElement) return;
+
+            var additionalInfo = $(".additionalInfo", entryElement);
+            additionalInfo.slideToggle("fast", function() {
+                $(".toggleAdditionalData i", entryElement).toggleClass("icon-chevron-down icon-chevron-up");
+            });
+        };
+
+        self.getAdditionalData = function(data) {
+            var output = "";
+            if (data["gcodeAnalysis"]) {
+                if (data["gcodeAnalysis"]["filament"] && typeof(data["gcodeAnalysis"]["filament"]) == "object") {
+                    var filament = data["gcodeAnalysis"]["filament"];
+                    if (_.keys(filament).length == 1) {
+                        output += gettext("Filament") + ": " + formatFilament(data["gcodeAnalysis"]["filament"]["tool" + 0]) + "<br>";
+                    } else if (_.keys(filament).length > 1) {
+                        for (var toolKey in filament) {
+                            if (!_.startsWith(toolKey, "tool") || !filament[toolKey] || !filament[toolKey].hasOwnProperty("length") || filament[toolKey]["length"] <= 0) continue;
+
+                            output += gettext("Filament") + " (" + gettext("Tool") + " " + toolKey.substr("tool".length) + "): " + formatFilament(filament[toolKey]) + "<br>";
+                        }
+                    }
+                }
+                output += gettext("Estimated Print Time") + ": " + formatDuration(data["gcodeAnalysis"]["estimatedPrintTime"]) + "<br>";
+            }
+            if (data["prints"] && data["prints"]["last"]) {
+                output += gettext("Last Printed") + ": " + formatTimeAgo(data["prints"]["last"]["date"]) + "<br>";
+                if (data["prints"]["last"]["lastPrintTime"]) {
+                    output += gettext("Last Print Time") + ": " + formatDuration(data["prints"]["last"]["lastPrintTime"]);
+                }
+            }
+            return output;
+        };
+
+        self.performSearch = function(e) {
+            var query = self.searchQuery();
+            if (query !== undefined && query.trim() != "") {
+                query = query.toLocaleLowerCase();
+                self.listHelper.changeSearchFunction(function(entry) {
+                    return entry && entry["name"].toLocaleLowerCase().indexOf(query) > -1;
+                });
+            } else {
+                self.listHelper.resetSearch();
+            }
+
+            return false;
+        };
+
+        self.onDataUpdaterReconnect = function() {
             self.requestData();
-        }
-    };
+        };
 
-    self.onSlicingDone = function(payload) {
-        self.requestData();
-    };
+        self.onUserLoggedIn = function(user) {
+            self.uploadButton.fileupload("enable");
+	    self.fastbot_firmware_upload.fileupload("enable");
+        };
 
-    self.onMetadataAnalysisFinished = function(payload) {
-        self.requestData();
-    };
-}
+        self.onUserLoggedOut = function() {
+            self.uploadButton.fileupload("disable");
+	    self.fastbot_firmware_upload.fileupload("disable");
+        };
 
+        self.onStartup = function() {
+            $(".accordion-toggle[data-target='#files']").click(function() {
+                var files = $("#files");
+                if (files.hasClass("in")) {
+                    files.removeClass("overflow_visible");
+                } else {
+                    setTimeout(function() {
+                        files.addClass("overflow_visible");
+                    }, 100);
+                }
+            });
+
+            $(".gcode_files").slimScroll({
+                height: "306px",
+                size: "5px",
+                distance: "0",
+                railVisible: true,
+                alwaysVisible: true,
+                scrollBy: "102px"
+            });
+
+            //~~ Gcode upload	    
+	    self.fastbot_firmware_upload = $("#fastbot_firmware_upload");
+	    /**/
+	    function fastbot_file_upload_done(e, data) {
+		if (data.result.done) {
+		   $("#firmware_upload_progress .bar").css("width", "0%");
+		   $("#firmware_upload_progress").addClass("progress-striped").addClass("active");
+		   $("#firmware_upload_progress .bar").text("Finish Ok");
+	       }
+	   }
+
+	    function fastbot_file_upload_fail(e, data) {
+		$("#firmware_upload_progress .bar").css("width", "0%");
+		$("#firmware_upload_progress").addClass("progress-striped").addClass("active");
+		$("#firmware_upload_progress .bar").text(gettext("Failed ..."));
+		alert("Failed, please check firmware!");
+	    }
+
+	    function fastbot_file_upload_progress(e, data) {
+		var progress = parseInt(data.loaded / data.total * 100, 10);
+		$("#firmware_upload_progress .bar").css("width", progress + "%");
+		$("#firmware_upload_progress .bar").text(gettext("Uploading ..."));
+		if (progress >= 100) {
+		    $("#firmware_upload_progress").addClass("progress-striped").addClass("active");
+		    $("#firmware_upload_progress .bar").text(gettext("Saving ..."));
+		}    
+	    }
+
+	    function fastbot_upload_firmware() {    
+		$("#fastbot_firmware_upload").fileupload({    
+		    maxNumberOfFiles: 1,
+		    url: API_BASEURL + "files/firmware",    
+		    dataType: "json",
+		    done: fastbot_file_upload_done,
+		    fail: fastbot_file_upload_fail,
+		    progressall: fastbot_file_upload_progress
+		});
+	     }
+	     
+	    function fastbot_gcode_upload_done(e, data) {
+		var filename = undefined;
+		var location = undefined;
+		if (data.result.files.hasOwnProperty("fbotSdcard")) {
+		    filename = data.result.files.fbotSdcard.name;
+		    location = "fbotSdcard";
+		} else if (data.result.files.hasOwnProperty("local")) {
+		    filename = data.result.files.local.name;
+		    location = "local";
+		}		
+    
+		self.requestData(filename, location);
+		//alert("fastbot_gcode_upload_done filename2="+ filename + ",location=" + location)
+		if (_.endsWith(filename.toLowerCase(), ".stl")) {
+		    self.slicingViewModel.show(location, filename);
+		}
+
+		if (data.result.done) {
+		    $("#gcode_upload_progress .bar").css("width", "0%");
+		    $("#gcode_upload_progress").removeClass("progress-striped").removeClass("active");
+		    $("#gcode_upload_progress .bar").text("");
+		}
+	    }
+	
+            function disable_fastbotSD_dropzone() {
+		$("#gcode_upload_fastbot_sd").fileupload({
+		    url: API_BASEURL + "files/fbotSdcard",
+		    dataType: "json",
+		    dropZone: null,
+		    done: fastbot_gcode_upload_done,
+		    fail: gcode_upload_fail,
+		    progressall: gcode_upload_progress
+		});
+	    }
+	    
+	     function curve_upload_fail(e, data) {    
+		alert("Failed, please check file!");
+	    }
+	    
+	    function extruder1_curve_upload_firmware() {           
+		    $("#extruder1_curve_upload").fileupload({
+			maxNumberOfFiles: 1,
+			url: API_BASEURL + "files/extruder1",                               
+			dataType: "json",
+			fail: curve_upload_fail,
+		    });
+	     }
+	    function extruder2_curve_upload_firmware() {           
+		    $("#extruder2_curve_upload").fileupload({
+			maxNumberOfFiles: 1,
+			url: API_BASEURL + "files/extruder2",                               
+			dataType: "json",
+			fail: curve_upload_fail,
+		    });
+	     }
+	 
+	    function bed_curve_upload_firmware() {           
+		    $("#bed_curve_upload").fileupload({
+			maxNumberOfFiles: 1,
+			url: API_BASEURL + "files/bed",                               
+			dataType: "json",
+			fail: curve_upload_fail,
+		    });
+	     }
+	 
+
+            self.uploadButton = $("#gcode_upload");
+            function gcode_upload_done(e, data) {
+                var filename = undefined;
+                var location = undefined;
+                if (data.result.files.hasOwnProperty("sdcard")) {
+                    filename = data.result.files.sdcard.name;
+                    location = "sdcard";
+                } else if (data.result.files.hasOwnProperty("local")) {
+                    filename = data.result.files.local.name;
+                    location = "local";
+                }
+                self.requestData(filename, location);
+
+                if (_.endsWith(filename.toLowerCase(), ".stl")) {
+                    self.slicing.show(location, filename);
+                }
+
+                if (data.result.done) {
+                    $("#gcode_upload_progress .bar").css("width", "0%");
+                    $("#gcode_upload_progress").removeClass("progress-striped").removeClass("active");
+                    $("#gcode_upload_progress .bar").text("");
+                }
+            }
+
+            function gcode_upload_fail(e, data) {
+                var error = "<p>" + gettext("Could not upload the file. Make sure that it is a GCODE file and has the extension \".gcode\" or \".gco\" or that it is an STL file with the extension \".stl\".") + "</p>";
+                error += pnotifyAdditionalInfo("<pre>" + data.jqXHR.responseText + "</pre>");
+                new PNotify({
+                    title: "Upload failed",
+                    text: error,
+                    type: "error",
+                    hide: false
+                });
+                $("#gcode_upload_progress .bar").css("width", "0%");
+                $("#gcode_upload_progress").removeClass("progress-striped").removeClass("active");
+                $("#gcode_upload_progress .bar").text("");
+            }
+
+            function gcode_upload_progress(e, data) {
+                var progress = parseInt(data.loaded / data.total * 100, 10);
+                $("#gcode_upload_progress .bar").css("width", progress + "%");
+                $("#gcode_upload_progress .bar").text(gettext("Uploading ..."));
+                if (progress >= 100) {
+                    $("#gcode_upload_progress").addClass("progress-striped").addClass("active");
+                    $("#gcode_upload_progress .bar").text(gettext("Saving ..."));
+                }
+            }
+
+            function enable_local_dropzone() {
+                $("#gcode_upload").fileupload({
+                    url: API_BASEURL + "files/local",
+                    dataType: "json",
+                    dropZone: localTarget,
+                    done: gcode_upload_done,
+                    fail: gcode_upload_fail,
+                    progressall: gcode_upload_progress
+                });
+            }
+
+            function disable_local_dropzone() {
+                $("#gcode_upload").fileupload({
+                    url: API_BASEURL + "files/local",
+                    dataType: "json",
+                    dropZone: null,
+                    done: gcode_upload_done,
+                    fail: gcode_upload_fail,
+                    progressall: gcode_upload_progress
+                });
+            }
+
+            function enable_sd_dropzone() {
+                $("#gcode_upload_sd").fileupload({
+                    url: API_BASEURL + "files/sdcard",
+                    dataType: "json",
+                    dropZone: $("#drop_sd"),
+                    done: gcode_upload_done,
+                    fail: gcode_upload_fail,
+                    progressall: gcode_upload_progress
+                });
+            }
+
+            function disable_sd_dropzone() {
+                $("#gcode_upload_sd").fileupload({
+                    url: API_BASEURL + "files/sdcard",
+                    dataType: "json",
+                    dropZone: null,
+                    done: gcode_upload_done,
+                    fail: gcode_upload_fail,
+                    progressall: gcode_upload_progress
+                });
+            }
+
+            var localTarget;
+            if (CONFIG_SD_SUPPORT) {
+                localTarget = $("#drop_locally");
+            } else {
+                localTarget = $("#drop");
+            }
+
+            self.loginState.isUser.subscribe(function(newValue) {
+                if (newValue === true) {
+                    enable_local_dropzone();
+                } else {
+                    disable_local_dropzone();
+		    fastbot_upload_firmware();
+		    disable_fastbotSD_dropzone();
+		    extruder1_curve_upload_firmware();
+		    extruder2_curve_upload_firmware();
+		    bed_curve_upload_firmware();
+                }
+            });
+
+            if (self.loginState.isUser()) {
+                enable_local_dropzone();
+            } else {
+                disable_local_dropzone();
+	        fastbot_upload_firmware();
+		disable_fastbotSD_dropzone();
+		extruder1_curve_upload_firmware();
+		extruder2_curve_upload_firmware();
+		bed_curve_upload_firmware();
+            }
+
+            if (CONFIG_SD_SUPPORT) {
+                self.printerState.isSdReady.subscribe(function(newValue) {
+                    if (newValue === true && self.loginState.isUser()) {
+                        enable_sd_dropzone();
+                    } else {
+                        disable_sd_dropzone();
+                    }
+                });
+
+                self.loginState.isUser.subscribe(function(newValue) {
+                    if (newValue === true && self.printerState.isSdReady()) {
+                        enable_sd_dropzone();
+                    } else {
+                        disable_sd_dropzone();
+                    }
+                });
+
+                if (self.printerState.isSdReady() && self.loginState.isUser()) {
+                    enable_sd_dropzone();
+                } else {
+                    disable_sd_dropzone();
+                }
+            }
+
+            $(document).bind("dragover", function (e) {	    
+		/* lkj 
+                var dropOverlay = $("#drop_overlay");
+                var dropZone = $("#drop");
+                var dropZoneLocal = $("#drop_locally");
+                var dropZoneSd = $("#drop_sd");
+                var dropZoneBackground = $("#drop_background");
+                var dropZoneLocalBackground = $("#drop_locally_background");
+                var dropZoneSdBackground = $("#drop_sd_background");
+                var timeout = window.dropZoneTimeout;
+
+                if (!timeout) {
+                    dropOverlay.addClass('in');
+                } else {
+                    clearTimeout(timeout);
+                }
+
+                var foundLocal = false;
+                var foundSd = false;
+                var found = false;
+                var node = e.target;
+                do {
+                    if (dropZoneLocal && node === dropZoneLocal[0]) {
+                        foundLocal = true;
+                        break;
+                    } else if (dropZoneSd && node === dropZoneSd[0]) {
+                        foundSd = true;
+                        break;
+                    } else if (dropZone && node === dropZone[0]) {
+                        found = true;
+                        break;
+                    }
+                    node = node.parentNode;
+                } while (node != null);
+
+                if (foundLocal) {
+                    dropZoneLocalBackground.addClass("hover");
+                    dropZoneSdBackground.removeClass("hover");
+                } else if (foundSd && self.printerState.isSdReady()) {
+                    dropZoneSdBackground.addClass("hover");
+                    dropZoneLocalBackground.removeClass("hover");
+                } else if (found) {
+                    dropZoneBackground.addClass("hover");
+                } else {
+                    if (dropZoneLocalBackground) dropZoneLocalBackground.removeClass("hover");
+                    if (dropZoneSdBackground) dropZoneSdBackground.removeClass("hover");
+                    if (dropZoneBackground) dropZoneBackground.removeClass("hover");
+                }*/
+
+                window.dropZoneTimeout = setTimeout(function () {
+                    window.dropZoneTimeout = null;
+                    dropOverlay.removeClass("in");
+                    if (dropZoneLocal) dropZoneLocalBackground.removeClass("hover");
+                    if (dropZoneSd) dropZoneSdBackground.removeClass("hover");
+                    if (dropZone) dropZoneBackground.removeClass("hover");
+                }, 100);
+            });
+
+            self.requestData();
+	    
+        };	    
+
+        self.onEventUpdatedFiles = function(payload) {
+            if (payload.type == "gcode") {
+                self.requestData();
+            }
+        };
+
+        self.onEventSlicingDone = function(payload) {
+            self.requestData();
+        };
+
+        self.onEventMetadataAnalysisFinished = function(payload) {
+            self.requestData();
+        };
+
+        self.onEventMetadataStatisticsUpdated = function(payload) {
+            self.requestData();
+        };
+
+        self.onEventTransferDone = function(payload) {
+            self.requestData(payload.remote, "sdcard");
+        };
+    }
+
+    OCTOPRINT_VIEWMODELS.push([
+        GcodeFilesViewModel,
+        ["settingsViewModel", "loginStateViewModel", "printerStateViewModel", "slicingViewModel"],
+        "#files_wrapper"
+    ]);
+});

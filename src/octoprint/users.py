@@ -17,29 +17,37 @@ import logging
 
 from octoprint.settings import settings
 
+from octoprint.util import atomic_write
+
 class UserManager(object):
 	valid_roles = ["user", "admin"]
 
 	def __init__(self):
 		self._logger = logging.getLogger(__name__)
 		self._session_users_by_session = dict()
-		self._session_users_by_username = dict()
+		self._session_users_by_userid = dict()
 
 	def login_user(self, user):
 		self._cleanup_sessions()
 
-		if user is None \
-		        or (isinstance(user, LocalProxy) and not isinstance(user._get_current_object(), User)) \
-		        or (not isinstance(user, LocalProxy) and not isinstance(user, User)):
+		if user is None:
+			return
+
+		if isinstance(user, LocalProxy):
+			user = user._get_current_object()
+
+		if not isinstance(user, User):
 			return None
 
 		if not isinstance(user, SessionUser):
 			user = SessionUser(user)
+
 		self._session_users_by_session[user.get_session()] = user
 
-		if not user.get_name() in self._session_users_by_username:
-			self._session_users_by_username[user.get_name()] = []
-		self._session_users_by_username[user.get_name()].append(user)
+		userid = user.get_id()
+		if not userid in self._session_users_by_userid:
+			self._session_users_by_userid[userid] = []
+		self._session_users_by_userid[userid].append(user)
 
 		self._logger.debug("Logged in user: %r" % user)
 
@@ -49,14 +57,18 @@ class UserManager(object):
 		if user is None:
 			return
 
+		if isinstance(user, LocalProxy):
+			user = user._get_current_object()
+
 		if not isinstance(user, SessionUser):
 			return
 
-		if user.get_name() in self._session_users_by_username:
-			users_by_username = self._session_users_by_username[user.get_name()]
-			for u in users_by_username:
+		userid = user.get_id()
+		if userid in self._session_users_by_userid:
+			users_by_userid = self._session_users_by_userid[userid]
+			for u in users_by_userid:
 				if u.get_session() == user.get_session():
-					users_by_username.remove(u)
+					users_by_userid.remove(u)
 					break
 
 		if user.get_session() in self._session_users_by_session:
@@ -124,22 +136,32 @@ class UserManager(object):
 	def changeUserPassword(self, username, password):
 		pass
 
+	def getUserSetting(self, username, key):
+		return None
+
+	def getAllUserSettings(self, username):
+		return dict()
+
+	def changeUserSetting(self, username, key, value):
+		pass
+
+	def changeUserSettings(self, username, new_settings):
+		pass
+
 	def removeUser(self, username):
-		if username in self._session_users_by_username:
-			users = self._session_users_by_username[username]
+		if username in self._session_users_by_userid:
+			users = self._session_users_by_userid[username]
 			sessions = [user.get_session() for user in users if isinstance(user, SessionUser)]
 			for session in sessions:
 				if session in self._session_users_by_session:
 					del self._session_users_by_session[session]
-			del self._session_users_by_username[username]
+			del self._session_users_by_userid[username]
 
-	def findUser(self, username=None, session=None):
-		if session is not None:
-			for session in self._session_users_by_session:
-				user = self._session_users_by_session[session]
-				if username is None or username == user.get_name():
-					return user
-				break
+	def findUser(self, userid=None, session=None):
+		if session is not None and session in self._session_users_by_session:
+			user = self._session_users_by_session[session]
+			if userid is None or userid == user.get_id():
+				return user
 
 		return None
 
@@ -157,7 +179,7 @@ class FilebasedUserManager(UserManager):
 
 		userfile = settings().get(["accessControl", "userfile"])
 		if userfile is None:
-			userfile = os.path.join(settings().settings_dir, "users.yaml")
+			userfile = os.path.join(settings().getBaseFolder("base"), "users.yaml")
 		self._userfile = userfile
 		self._users = {}
 		self._dirty = False
@@ -175,7 +197,10 @@ class FilebasedUserManager(UserManager):
 					apikey = None
 					if "apikey" in attributes:
 						apikey = attributes["apikey"]
-					self._users[name] = User(name, attributes["password"], attributes["active"], attributes["roles"], apikey)
+					settings = dict()
+					if "settings" in attributes:
+						settings = attributes["settings"]
+					self._users[name] = User(name, attributes["password"], attributes["active"], attributes["roles"], apikey=apikey, settings=settings)
 		else:
 			self._customized = False
 
@@ -190,10 +215,11 @@ class FilebasedUserManager(UserManager):
 				"password": user._passwordHash,
 				"active": user._active,
 				"roles": user._roles,
-				"apikey": user._apikey
+				"apikey": user._apikey,
+				"settings": user._settings
 			}
 
-		with open(self._userfile, "wb") as f:
+		with atomic_write(self._userfile, "wb") as f:
 			yaml.safe_dump(data, f, default_flow_style=False, indent="    ", allow_unicode=True)
 			self._dirty = False
 		self._load()
@@ -205,7 +231,7 @@ class FilebasedUserManager(UserManager):
 		if username in self._users.keys():
 			raise UserAlreadyExists(username)
 
-		self._users[username] = User(username, UserManager.createPasswordHash(password), active, roles, apikey)
+		self._users[username] = User(username, UserManager.createPasswordHash(password), active, roles, apikey=apikey)
 		self._dirty = True
 		self._save()
 
@@ -263,6 +289,43 @@ class FilebasedUserManager(UserManager):
 			self._dirty = True
 			self._save()
 
+	def changeUserSetting(self, username, key, value):
+		if not username in self._users.keys():
+			raise UnknownUser(username)
+
+		user = self._users[username]
+		current = user.get_setting(key)
+		if not current or current != value:
+			old_value = user.get_setting(key)
+			user.set_setting(key, value)
+			self._dirty = self._dirty or old_value != value
+			self._save()
+
+	def changeUserSettings(self, username, new_settings):
+		if not username in self._users:
+			raise UnknownUser(username)
+
+		user = self._users[username]
+		for key, value in new_settings.items():
+			old_value = user.get_setting(key)
+			user.set_setting(key, value)
+			self._dirty = self._dirty or old_value != value
+		self._save()
+
+	def getAllUserSettings(self, username):
+		if not username in self._users.key():
+			raise UnknownUser(username)
+
+		user = self._users[username]
+		return user.get_all_settings()
+
+	def getUserSetting(self, username, key):
+		if not username in self._users.keys():
+			raise UnknownUser(username)
+
+		user = self._users[username]
+		return user.get_setting(key)
+
 	def generateApiKey(self, username):
 		if not username in self._users.keys():
 			raise UnknownUser(username)
@@ -292,16 +355,16 @@ class FilebasedUserManager(UserManager):
 		self._dirty = True
 		self._save()
 
-	def findUser(self, username=None, apikey=None, session=None):
-		user = UserManager.findUser(self, username=username, session=session)
+	def findUser(self, userid=None, apikey=None, session=None):
+		user = UserManager.findUser(self, userid=userid, session=session)
 
 		if user is not None:
 			return user
 
-		if username is not None:
-			if username not in self._users.keys():
+		if userid is not None:
+			if userid not in self._users.keys():
 				return None
-			return self._users[username]
+			return self._users[userid]
 
 		elif apikey is not None:
 			for user in self._users.values():
@@ -335,12 +398,16 @@ class UnknownRole(Exception):
 ##~~ User object
 
 class User(UserMixin):
-	def __init__(self, username, passwordHash, active, roles, apikey=None):
+	def __init__(self, username, passwordHash, active, roles, apikey=None, settings=None):
 		self._username = username
 		self._passwordHash = passwordHash
 		self._active = active
 		self._roles = roles
 		self._apikey = apikey
+
+		if not settings:
+			settings = dict()
+		self._settings = settings
 
 	def asDict(self):
 		return {
@@ -348,14 +415,15 @@ class User(UserMixin):
 			"active": self.is_active(),
 			"admin": self.is_admin(),
 			"user": self.is_user(),
-			"apikey": self._apikey
+			"apikey": self._apikey,
+			"settings": self._settings
 		}
 
 	def check_password(self, passwordHash):
 		return self._passwordHash == passwordHash
 
 	def get_id(self):
-		return self._username
+		return self.get_name()
 
 	def get_name(self):
 		return self._username
@@ -369,12 +437,54 @@ class User(UserMixin):
 	def is_admin(self):
 		return "admin" in self._roles
 
+	def get_all_settings(self):
+		return self._settings
+
+	def get_setting(self, key):
+		if not isinstance(key, (tuple, list)):
+			path = [key]
+		else:
+			path = key
+
+		return self._get_setting(path)
+
+	def set_setting(self, key, value):
+		if not isinstance(key, (tuple, list)):
+			path = [key]
+		else:
+			path = key
+		self._set_setting(path, value)
+
+	def _get_setting(self, path):
+		s = self._settings
+		for p in path:
+			if p in s:
+				s = s[p]
+			else:
+				return None
+		return s
+
+	def _set_setting(self, path, value):
+		s = self._settings
+		for p in path[:-1]:
+			if not p in s:
+				s[p] = dict()
+
+			if not isinstance(s[p], dict):
+				return False
+
+			s = s[p]
+
+		key = path[-1]
+		s[key] = value
+		return True
+
 	def __repr__(self):
 		return "User(id=%s,name=%s,active=%r,user=%r,admin=%r)" % (self.get_id(), self.get_name(), self.is_active(), self.is_user(), self.is_admin())
 
 class SessionUser(User):
 	def __init__(self, user):
-		User.__init__(self, user._username, user._passwordHash, user._active, user._roles, user._apikey)
+		User.__init__(self, user._username, user._passwordHash, user._active, user._roles, user._apikey, user._settings)
 
 		import string
 		import random

@@ -8,13 +8,16 @@ __copyright__ = "Copyright (C) 2014 The OctoPrint Project - Released under terms
 import logging
 import threading
 import sockjs.tornado
+import time
 
 import octoprint.timelapse
 import octoprint.server
 from octoprint.events import Events
 
+import octoprint.printer
 
-class PrinterStateConnection(sockjs.tornado.SockJSConnection):
+
+class PrinterStateConnection(sockjs.tornado.SockJSConnection, octoprint.printer.PrinterCallback):
 	def __init__(self, printer, fileManager, analysisQueue, userManager, eventManager, pluginManager, session):
 		sockjs.tornado.SockJSConnection.__init__(self, session)
 
@@ -46,13 +49,28 @@ class PrinterStateConnection(sockjs.tornado.SockJSConnection):
 		self._remoteAddress = self._getRemoteAddress(info)
 		self._logger.info("New connection from client: %s" % self._remoteAddress)
 
-		# connected => update the API key, might be necessary if the client was left open while the server restarted
-		self._emit("connected", {"apikey": octoprint.server.UI_API_KEY, "version": octoprint.server.VERSION, "display_version": octoprint.server.DISPLAY_VERSION})
+		plugin_signature = lambda impl: "{}:{}".format(impl._identifier, impl._plugin_version)
+		template_plugins = map(plugin_signature, self._pluginManager.get_implementations(octoprint.plugin.TemplatePlugin))
+		asset_plugins = map(plugin_signature, self._pluginManager.get_implementations(octoprint.plugin.AssetPlugin))
+		ui_plugins = sorted(set(template_plugins + asset_plugins))
 
-		self._printer.registerCallback(self)
+		import hashlib
+		plugin_hash = hashlib.md5()
+		plugin_hash.update(",".join(ui_plugins))
+
+		# connected => update the API key, might be necessary if the client was left open while the server restarted
+		self._emit("connected", {
+			"apikey": octoprint.server.UI_API_KEY,
+			"version": octoprint.server.VERSION,
+			"display_version": octoprint.server.DISPLAY_VERSION,
+			"branch": octoprint.server.BRANCH,
+			"plugin_hash": plugin_hash.hexdigest()
+		})
+
+		self._printer.register_callback(self)
 		self._fileManager.register_slicingprogress_callback(self)
 		octoprint.timelapse.registerCallback(self)
-		self._pluginManager.register_client(self)
+		self._pluginManager.register_message_receiver(self.on_plugin_message)
 
 		self._eventManager.fire(Events.CLIENT_OPENED, {"remoteAddress": self._remoteAddress})
 		for event in octoprint.events.all_events():
@@ -62,10 +80,10 @@ class PrinterStateConnection(sockjs.tornado.SockJSConnection):
 
 	def on_close(self):
 		self._logger.info("Client connection closed: %s" % self._remoteAddress)
-		self._printer.unregisterCallback(self)
+		self._printer.unregister_callback(self)
 		self._fileManager.unregister_slicingprogress_callback(self)
 		octoprint.timelapse.unregisterCallback(self)
-		self._pluginManager.unregister_client(self)
+		self._pluginManager.unregister_message_receiver(self.on_plugin_message)
 
 		self._eventManager.fire(Events.CLIENT_CLOSED, {"remoteAddress": self._remoteAddress})
 		for event in octoprint.events.all_events():
@@ -74,7 +92,7 @@ class PrinterStateConnection(sockjs.tornado.SockJSConnection):
 	def on_message(self, message):
 		pass
 
-	def sendCurrentData(self, data):
+	def on_printer_send_current_data(self, data):
 		# add current temperature, log and message backlogs to sent data
 		with self._temperatureBacklogMutex:
 			temperatures = self._temperatureBacklog
@@ -92,10 +110,11 @@ class PrinterStateConnection(sockjs.tornado.SockJSConnection):
 		if "job" in data and data["job"] is not None \
 				and "file" in data["job"] and "name" in data["job"]["file"] and "origin" in data["job"]["file"] \
 				and data["job"]["file"]["name"] is not None and data["job"]["file"]["origin"] is not None \
-				and (self._printer.isPrinting() or self._printer.isPaused()):
+				and (self._printer.is_printing() or self._printer.is_paused()):
 			busy_files.append(dict(origin=data["job"]["file"]["origin"], name=data["job"]["file"]["name"]))
 
 		data.update({
+			"serverTime": time.time(),
 			"temps": temperatures,
 			"logs": logs,
 			"messages": messages,
@@ -103,24 +122,16 @@ class PrinterStateConnection(sockjs.tornado.SockJSConnection):
 		})
 		self._emit("current", data)
 
-	def sendHistoryData(self, data):
-		self._emit("history", data)
-
-	#lkj
-	'''
-	"type": firmware,
-	     "version": xx,
-	"type": ???,
-	     "???": ??
-	'''
+	def on_printer_send_initial_data(self, data):
+		data_to_send = dict(data)
+		data_to_send["serverTime"] = time.time()
+		self._emit("history", data_to_send)
+		
 	def sendFastBotEvent(self, type, payload=None):
 		self._emit("fastbot", {"type": type, "payload": payload})
 
 	def sendEvent(self, type, payload=None):
 		self._emit("event", {"type": type, "payload": payload})
-
-	def sendFeedbackCommandOutput(self, name, output):
-		self._emit("feedbackCommandOutput", {"name": name, "output": output})
 
 	def sendTimelapseConfig(self, timelapseConfig):
 		self._emit("timelapse", timelapseConfig)
@@ -130,18 +141,18 @@ class PrinterStateConnection(sockjs.tornado.SockJSConnection):
 		           dict(slicer=slicer, source_location=source_location, source_path=source_path, dest_location=dest_location, dest_path=dest_path, progress=progress)
 		)
 
-	def sendPluginMessage(self, plugin, data):
+	def on_plugin_message(self, plugin, data):
 		self._emit("plugin", dict(plugin=plugin, data=data))
 
-	def addLog(self, data):
+	def on_printer_add_log(self, data):
 		with self._logBacklogMutex:
 			self._logBacklog.append(data)
 
-	def addMessage(self, data):
+	def on_printer_add_message(self, data):
 		with self._messageBacklogMutex:
 			self._messageBacklog.append(data)
 
-	def addTemperature(self, data):
+	def on_printer_add_temperature(self, data):
 		with self._temperatureBacklogMutex:
 			self._temperatureBacklog.append(data)
 
@@ -150,6 +161,7 @@ class PrinterStateConnection(sockjs.tornado.SockJSConnection):
 
 	def _emit(self, type, payload):
 		try:
-			self.send({type: payload})
+			if type is not None:
+				self.send({type: payload})
 		except Exception as e:
-			self._logger.warn("Could not send message to client %s: %s" % (self._remoteAddress, e.message))
+			self._logger.warn("Could not send message to client %s: %s" % (self._remoteAddress, str(e)))

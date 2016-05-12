@@ -6,43 +6,61 @@ __license__ = 'GNU Affero General Public License http://www.gnu.org/licenses/agp
 __copyright__ = "Copyright (C) 2014 The OctoPrint Project - Released under terms of the AGPLv3 License"
 
 from flask import request, jsonify, make_response, url_for
+from werkzeug.exceptions import BadRequest
 
 from octoprint.server import slicingManager
 from octoprint.server.util.flask import restricted_access
 from octoprint.server.api import api, NO_CONTENT
 
-from octoprint.settings import settings as s
+from octoprint.settings import settings as s, valid_boolean_trues
+
+from octoprint.slicing import UnknownSlicer, SlicerNotConfigured, ProfileAlreadyExists, UnknownProfile
 
 
 @api.route("/slicing", methods=["GET"])
 def slicingListAll():
 	default_slicer = s().get(["slicing", "defaultSlicer"])
 
+	if "configured" in request.values and request.values["configured"] in valid_boolean_trues:
+		slicers = slicingManager.configured_slicers
+	else:
+		slicers = slicingManager.registered_slicers
+
 	result = dict()
-	for slicer in slicingManager.registered_slicers:
-		result[slicer] = dict(
-			key=slicer,
-			displayName=slicingManager.get_slicer(slicer).get_slicer_properties()["name"],
-			default=default_slicer == slicer,
-			profiles=_getSlicingProfilesData(slicer)
-		)
+	for slicer in slicers:
+		try:
+			slicer_impl = slicingManager.get_slicer(slicer, require_configured=False)
+			result[slicer] = dict(
+				key=slicer,
+				displayName=slicer_impl.get_slicer_properties()["name"],
+				default=default_slicer == slicer,
+				configured = slicer_impl.is_slicer_configured(),
+				profiles=_getSlicingProfilesData(slicer)
+			)
+		except (UnknownSlicer, SlicerNotConfigured):
+			# this should never happen
+			pass
 
 	return jsonify(result)
 
 @api.route("/slicing/<string:slicer>/profiles", methods=["GET"])
 def slicingListSlicerProfiles(slicer):
-	if not slicer in slicingManager.registered_slicers:
-		return make_response("Unknown slicer {slicer}".format(**locals()), 404)
+	configured = False
+	if "configured" in request.values and request.values["configured"] in valid_boolean_trues:
+		configured = True
 
-	return jsonify(_getSlicingProfilesData(slicer))
+	try:
+		return jsonify(_getSlicingProfilesData(slicer, require_configured=configured))
+	except (UnknownSlicer, SlicerNotConfigured):
+		return make_response("Unknown slicer {slicer}".format(**locals()), 404)
 
 @api.route("/slicing/<string:slicer>/profiles/<string:name>", methods=["GET"])
 def slicingGetSlicerProfile(slicer, name):
-	if not slicer in slicingManager.registered_slicers:
+	try:
+		profile = slicingManager.load_profile(slicer, name, require_configured=False)
+	except UnknownSlicer:
 		return make_response("Unknown slicer {slicer}".format(**locals()), 404)
-
-	profile = slicingManager.load_profile(slicer, name)
-	if not profile:
+	except UnknownProfile:
 		return make_response("Profile not found", 404)
 
 	result = _getSlicingProfileData(slicer, name, profile)
@@ -52,13 +70,13 @@ def slicingGetSlicerProfile(slicer, name):
 @api.route("/slicing/<string:slicer>/profiles/<string:name>", methods=["PUT"])
 @restricted_access
 def slicingAddSlicerProfile(slicer, name):
-	if not slicer in slicingManager.registered_slicers:
-		return make_response("Unknown slicer {slicer}".format(**locals()), 404)
-
 	if not "application/json" in request.headers["Content-Type"]:
-		return None, None, make_response("Expected content-type JSON", 400)
+		return make_response("Expected content-type JSON", 400)
 
-	json_data = request.json
+	try:
+		json_data = request.json
+	except BadRequest:
+		return make_response("Malformed JSON body in request", 400)
 
 	data = dict()
 	display_name = None
@@ -70,7 +88,11 @@ def slicingAddSlicerProfile(slicer, name):
 	if "description" in json_data:
 		description = json_data["description"]
 
-	profile = slicingManager.save_profile(slicer, name, data, display_name=display_name, description=description)
+	try:
+		profile = slicingManager.save_profile(slicer, name, data,
+		                                      allow_overwrite=True, display_name=display_name, description=description)
+	except UnknownSlicer:
+		return make_response("Unknown slicer {slicer}".format(**locals()), 404)
 
 	result = _getSlicingProfileData(slicer, name, profile)
 	r = make_response(jsonify(result), 201)
@@ -80,17 +102,20 @@ def slicingAddSlicerProfile(slicer, name):
 @api.route("/slicing/<string:slicer>/profiles/<string:name>", methods=["PATCH"])
 @restricted_access
 def slicingPatchSlicerProfile(slicer, name):
-	if not slicer in slicingManager.registered_slicers:
-		return make_response("Unknown slicer {slicer}".format(**locals()), 404)
-
 	if not "application/json" in request.headers["Content-Type"]:
-		return None, None, make_response("Expected content-type JSON", 400)
+		return make_response("Expected content-type JSON", 400)
 
-	profile = slicingManager.load_profile(slicer, name)
-	if not profile:
-		return make_response("Profile not found", 404)
+	try:
+		profile = slicingManager.load_profile(slicer, name, require_configured=False)
+	except UnknownSlicer:
+		return make_response("Unknown slicer {slicer}".format(**locals()), 404)
+	except UnknownProfile:
+		return make_response("Profile {name} for slicer {slicer} not found".format(**locals()), 404)
 
-	json_data = request.json
+	try:
+		json_data = request.json
+	except BadRequest:
+		return make_response("Malformed JSON body in request", 400)
 
 	data = dict()
 	display_name = None
@@ -111,22 +136,22 @@ def slicingPatchSlicerProfile(slicer, name):
 		s().set(["slicing", "defaultProfiles"], default_profiles)
 		s().save(force=True)
 
-	slicingManager.save_profile(slicer, name, profile, overrides=data, display_name=display_name, description=description)
-	return NO_CONTENT
+	saved_profile = slicingManager.save_profile(slicer, name, profile,
+	                                            allow_overwrite=True, overrides=data, display_name=display_name, description=description)
+	return jsonify(_getSlicingProfileData(slicer, name, saved_profile))
 
 @api.route("/slicing/<string:slicer>/profiles/<string:name>", methods=["DELETE"])
 @restricted_access
 def slicingDelSlicerProfile(slicer, name):
-	if not slicer in slicingManager.registered_slicers:
+	try:
+		slicingManager.delete_profile(slicer, name)
+	except UnknownSlicer:
 		return make_response("Unknown slicer {slicer}".format(**locals()), 404)
 
-	slicingManager.delete_profile(slicer, name)
 	return NO_CONTENT
 
-def _getSlicingProfilesData(slicer):
-	profiles = slicingManager.all_profiles(slicer)
-	if not profiles:
-		return dict()
+def _getSlicingProfilesData(slicer, require_configured=False):
+	profiles = slicingManager.all_profiles(slicer, require_configured=require_configured)
 
 	result = dict()
 	for name, profile in profiles.items():

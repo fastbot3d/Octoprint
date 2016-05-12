@@ -1,7 +1,7 @@
 import os, struct, sys, time
 
 from serial import Serial
-from serial import SerialException, SerialTimeoutException
+from serial import SerialException
 
 import ispBase, intelHex
 

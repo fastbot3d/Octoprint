@@ -7,34 +7,57 @@ __copyright__ = "Copyright (C) 2014 The OctoPrint Project - Released under terms
 
 import logging
 import os
-import subprocess
+
+import octoprint.plugin
+import octoprint.util
 
 from octoprint.events import eventManager, Events
-from octoprint.plugin import plugin_manager, ProgressPlugin
 
 from .destinations import FileDestinations
 from .analysis import QueueEntry, AnalysisQueue
 from .storage import LocalFileStorage
+from .util import AbstractFileWrapper, StreamWrapper, DiskFileWrapper
+
+from collections import namedtuple
 
 import octoprint.util.firmwareFastBot as firmwareFastBot
 
+ContentTypeMapping = namedtuple("ContentTypeMapping", "extensions, content_type")
+ContentTypeDetector = namedtuple("ContentTypeDetector", "extensions, detector")
+
 extensions = dict(
-	# extensions for 3d model files
-	model=dict(
-		stl=["stl"]
-	),
-	# extensions for printable machine code
-	machinecode=dict(
-		gcode=["gcode", "gco", "g"]
-	),
-        firmware=dict(
-                fbot=["fbot"]
-        )
 )
+
+def full_extension_tree():
+	result = dict(
+		# extensions for 3d model files
+		model=dict(
+			stl=ContentTypeMapping(["stl"], "application/sla")
+		),
+		# extensions for printable machine code
+		machinecode=dict(
+			gcode=ContentTypeMapping(["gcode", "gco", "g"], "text/plain")
+		),
+	        firmware=dict(
+	                fbot=ContentTypeMapping(["fbot"], "text/plain")
+	        ),
+	)
+
+	extension_tree_hooks = octoprint.plugin.plugin_manager().get_hooks("octoprint.filemanager.extension_tree")
+	for name, hook in extension_tree_hooks.items():
+		try:
+			hook_result = hook()
+			if hook_result is None or not isinstance(hook_result, dict):
+				continue
+			result = octoprint.util.dict_merge(result, hook_result)
+		except:
+			logging.getLogger(__name__).exception("Exception while retrieving additional extension tree entries from hook {name}".format(name=name))
+
+	return result
 
 def get_extensions(type, subtree=None):
 	if not subtree:
-		subtree = extensions
+		subtree = full_extension_tree()
 
 	for key, value in subtree.items():
 		if key == type:
@@ -48,25 +71,31 @@ def get_extensions(type, subtree=None):
 
 def get_all_extensions(subtree=None):
 	if not subtree:
-		subtree = extensions
+		subtree = full_extension_tree()
 
 	result = []
 	if isinstance(subtree, dict):
 		for key, value in subtree.items():
 			if isinstance(value, dict):
 				result += get_all_extensions(value)
+			elif isinstance(value, (ContentTypeMapping, ContentTypeDetector)):
+				result += value.extensions
 			elif isinstance(value, (list, tuple)):
 				result += value
+	elif isinstance(subtree, (ContentTypeMapping, ContentTypeDetector)):
+		result = subtree.extensions
 	elif isinstance(subtree, (list, tuple)):
 		result = subtree
 	return result
 
 def get_path_for_extension(extension, subtree=None):
 	if not subtree:
-		subtree = extensions
+		subtree = full_extension_tree()
 
 	for key, value in subtree.items():
-		if isinstance(value, (list, tuple)) and extension in value:
+		if isinstance(value, (ContentTypeMapping, ContentTypeDetector)) and extension in value.extensions:
+			return [key]
+		elif isinstance(value, (list, tuple)) and extension in value:
 			return [key]
 		elif isinstance(value, dict):
 			path = get_path_for_extension(extension, subtree=value)
@@ -75,11 +104,26 @@ def get_path_for_extension(extension, subtree=None):
 
 	return None
 
-all_extensions = get_all_extensions()
+def get_content_type_mapping_for_extension(extension, subtree=None):
+	if not subtree:
+		subtree = full_extension_tree()
+
+	for key, value in subtree.items():
+		content_extension_matches = isinstance(value, (ContentTypeMapping, ContentTypeDetector)) and extension in value. extensions
+		list_extension_matches = isinstance(value, (list, tuple)) and extension in value
+
+		if content_extension_matches or list_extension_matches:
+			return value
+		elif isinstance(value, dict):
+			result = get_content_type_mapping_for_extension(extension, subtree=value)
+			if result is not None:
+				return result
+
+	return None
 
 def valid_extension(extension, type=None):
 	if not type:
-		return extension in all_extensions
+		return extension in get_all_extensions()
 	else:
 		extensions = get_extensions(type)
 		if extensions:
@@ -94,6 +138,19 @@ def get_file_type(filename):
 	_, extension = os.path.splitext(filename)
 	extension = extension[1:].lower()
 	return get_path_for_extension(extension)
+
+def get_mime_type(filename):
+	_, extension = os.path.splitext(filename)
+	extension = extension[1:].lower()
+	mapping = get_content_type_mapping_for_extension(extension)
+	if mapping:
+		if isinstance(mapping, ContentTypeMapping) and mapping.content_type is not None:
+			return mapping.content_type
+		elif isinstance(mapping, ContentTypeDetector) and callable(mapping.detector):
+			result = mapping.detector(filename)
+			if result is not None:
+				return result
+	return "application/octet-stream"
 
 
 class NoSuchStorage(Exception):
@@ -120,25 +177,46 @@ class FileManager(object):
 		self._slicing_progress_callbacks = []
 		self._last_slicing_progress = None
 
-		self._progress_plugins = plugin_manager().get_implementations(ProgressPlugin)
+		self._progress_plugins = []
+		self._preprocessor_hooks = dict()
 
-		for storage_type, storage_manager in self._storage_managers.items():
-			self._determine_analysis_backlog(storage_type, storage_manager)
+	def initialize(self):
+		self.reload_plugins()
+
+		def worker():
+			self._logger.info("Adding backlog items from all storage types to analysis queue...".format(**locals()))
+			for storage_type, storage_manager in self._storage_managers.items():
+				self._determine_analysis_backlog(storage_type, storage_manager)
+
+		import threading
+		thread = threading.Thread(target=worker)
+		thread.daemon = True
+		thread.start()
+
+	def reload_plugins(self):
+		self._progress_plugins = octoprint.plugin.plugin_manager().get_implementations(octoprint.plugin.ProgressPlugin)
+		self._preprocessor_hooks = octoprint.plugin.plugin_manager().get_hooks("octoprint.filemanager.preprocessor")
 
 	def register_slicingprogress_callback(self, callback):
 		self._slicing_progress_callbacks.append(callback)
 
 	def unregister_slicingprogress_callback(self, callback):
-		self._slicing_progress_callbacks.remove(callback)
+		try:
+			self._slicing_progress_callbacks.remove(callback)
+		except ValueError:
+			# callback was not registered
+			pass
 
 	def _determine_analysis_backlog(self, storage_type, storage_manager):
-		self._logger.info("Adding backlog items from {storage_type} to analysis queue".format(**locals()))
+		counter = 0
 		for entry, path, printer_profile in storage_manager.analysis_backlog:
 			file_type = get_file_type(path)[-1]
 
 			# we'll use the default printer profile for the backlog since we don't know better
 			queue_entry = QueueEntry(entry, file_type, storage_type, path, self._printer_profile_manager.get_default())
 			self._analysis_queue.enqueue(queue_entry, high_priority=False)
+			counter += 1
+		self._logger.info("Added {counter} items from storage type \"{storage_type}\" to analysis queue".format(**locals()))
 
 	def add_storage(self, storage_type, storage_manager):
 		self._storage_managers[storage_type] = storage_manager
@@ -163,7 +241,7 @@ class FileManager(object):
 
 	def slice(self, slicer_name, source_location, source_path, dest_location, dest_path,
 	          position=None, profile=None, printer_profile_id=None, overrides=None, callback=None, callback_args=None):
-		absolute_source_path = self.get_absolute_path(source_location, source_path)
+		absolute_source_path = self.path_on_disk(source_location, source_path)
 
 		def stlProcessed(source_location, source_path, tmp_path, dest_location, dest_path, start_time, printer_profile_id, callback, callback_args, _error=None, _cancelled=False, _analysis=None):
 			try:
@@ -175,22 +253,12 @@ class FileManager(object):
 					source_meta = self.get_metadata(source_location, source_path)
 					hash = source_meta["hash"]
 
-					class Wrapper(object):
-						def __init__(self, stl_name, temp_path, hash):
-							self.stl_name = stl_name
-							self.temp_path = temp_path
-							self.hash = hash
-
-						def save(self, absolute_dest_path):
-							with open(absolute_dest_path, "w") as d:
-								d.write(";Generated from {stl_name} {hash}\r".format(**vars(self)))
-								with open(tmp_path, "r") as s:
-									import shutil
-									shutil.copyfileobj(s, d)
-
+					import io
 					links = [("model", dict(name=source_path))]
 					_, stl_name = self.split_path(source_location, source_path)
-					file_obj = Wrapper(stl_name, temp_path, hash)
+					file_obj = StreamWrapper(os.path.basename(dest_path),
+					                         io.BytesIO(u";Generated from {stl_name} {hash}\n".format(**locals()).encode("ascii", "replace")),
+					                         io.FileIO(tmp_path, "rb"))
 
 					printer_profile = self._printer_profile_manager.get(printer_profile_id)
 					self.add_file(dest_location, dest_path, file_obj, links=links, allow_overwrite=True, printer_profile=printer_profile, analysis=_analysis)
@@ -237,18 +305,17 @@ class FileManager(object):
 			self._slicing_jobs[dest_job_key] = self._slicing_jobs[source_job_key] = (slicer_name, absolute_source_path, temp_path)
 
 		args = (source_location, source_path, temp_path, dest_location, dest_path, start_time, printer_profile_id, callback, callback_args)
-		return self._slicing_manager.slice(
-			slicer_name,
-			absolute_source_path,
-			temp_path,
-			profile,
-			stlProcessed,
-			position=position,
-			callback_args=args,
-			overrides=overrides,
-			printer_profile_id=printer_profile_id,
-			on_progress=self.on_slicing_progress,
-			on_progress_args=(slicer_name, source_location, source_path, dest_location, dest_path))
+		self._slicing_manager.slice(slicer_name,
+		                            absolute_source_path,
+		                            temp_path,
+		                            profile,
+		                            stlProcessed,
+		                            position=position,
+		                            callback_args=args,
+		                            overrides=overrides,
+		                            printer_profile_id=printer_profile_id,
+		                            on_progress=self.on_slicing_progress,
+		                            on_progress_args=(slicer_name, source_location, source_path, dest_location, dest_path))
 
 	def on_slicing_progress(self, slicer, source_location, source_path, dest_location, dest_path, _progress=None):
 		if not _progress:
@@ -263,11 +330,11 @@ class FileManager(object):
 
 			if progress_int:
 				def call_plugins(slicer, source_location, source_path, dest_location, dest_path, progress):
-					for name, plugin in self._progress_plugins.items():
+					for plugin in self._progress_plugins:
 						try:
 							plugin.on_slicing_progress(slicer, source_location, source_path, dest_location, dest_path, progress)
 						except:
-							self._logger.exception("Exception while sending slicing progress to plugin %s" % name)
+							self._logger.exception("Exception while sending slicing progress to plugin %s" % plugin._identifier)
 
 				import threading
 				thread = threading.Thread(target=call_plugins, args=(slicer, source_location, source_path, dest_location, dest_path, progress_int))
@@ -296,8 +363,17 @@ class FileManager(object):
 		if printer_profile is None:
 			printer_profile = self._printer_profile_manager.get_current_or_default()
 
+		for hook in self._preprocessor_hooks.values():
+			try:
+				hook_file_object = hook(path, file_object, links=links, printer_profile=printer_profile, allow_overwrite=allow_overwrite)
+			except:
+				self._logger.exception("Error when calling preprocessor hook {}, ignoring".format(hook))
+				continue
+
+			if hook_file_object is not None:
+				file_object = hook_file_object
 		file_path = self._storage(destination).add_file(path, file_object, links=links, printer_profile=printer_profile, allow_overwrite=allow_overwrite)
-		absolute_path = self._storage(destination).get_absolute_path(file_path)
+		absolute_path = self._storage(destination).path_on_disk(file_path)
 
 		if analysis is None:
 			file_type = get_file_type(absolute_path)
@@ -320,8 +396,7 @@ class FileManager(object):
 			return None
 		
 		file_path = self._storage(destination).add_file(path, file_object, links=links, printer_profile=printer_profile, allow_overwrite=allow_overwrite)
-		absolute_path = self._storage(destination).get_absolute_path(file_path)
-		
+		absolute_path = self._storage(destination).path_on_disk(file_path)
 		firmware = firmwareFastBot.FirmwareFastbot()
 		print("firmware absolute path:%s" % absolute_path)
 		firmware_version = firmware.loadFirmware(absolute_path, "/tmp/")
@@ -334,13 +409,13 @@ class FileManager(object):
 		print("firmware_version 22 :%s" % firmware_version)
 		
 		from octoprint.server import printer
-		from octoprint.comm.protocol.reprap.util import GcodeCommand
 		
-		if printer.isOperational():			
+		if printer.is_operational():			
 			try:
-				cmd = GcodeCommand("M504",s=firmware_version.strip("\x00"))
-				#print("cmd=%s" % str(cmd))
-				printer.command(cmd)			
+				cmd = []
+				cmd.append("M504 S%s" % firmware_version.strip("\x00"))
+				print("firmware M504 cmd=%s" % str(cmd))
+				printer.commands(cmd)			
 			except : 
 				exceptionString = getExceptionString()
 				print("ex:%s" % str(exceptionString))
@@ -348,17 +423,7 @@ class FileManager(object):
 		firmware.rebootSystem(5)
 		print("firmware absolute path:%s" % absolute_path)	
 		
-		'''
-		if analysis is None:
-			file_type = get_file_type(absolute_path)
-			if file_type:
-				queue_entry = QueueEntry(file_path, file_type[-1], destination, absolute_path, _profile)
-				self._analysis_queue.enqueue(queue_entry, high_priority=True)
-		else:
-			self._add_analysis_result(destination, path, analysis)
-				
-		eventManager().fire(Events.UPDATED_FILES, dict(type="printables"))
-		'''
+		
 		return absolute_path
 	#lkj 
 	def add_temp_curve_file(self, destination, path, file_object, links=None, allow_overwrite=False, printer_profile=None, target=None):
@@ -371,20 +436,20 @@ class FileManager(object):
 			return None
 	
 		file_path = self._storage(destination).add_file(path, file_object, links=links, printer_profile=printer_profile, allow_overwrite=allow_overwrite)
-		absolute_path = self._storage(destination).get_absolute_path(file_path)
+		absolute_path = self._storage(destination).path_on_disk(file_path)
 	
 		from octoprint.server import printer
-		from octoprint.comm.protocol.reprap.util import GcodeCommand
 		
-		if printer.isOperational():			
+		if printer.is_operational():			
 			try:
-				cmd = GcodeCommand("M504", f=1, param= target + ":" + absolute_path)
+				cmd = []
+				cmd.append("M504 F1.000000 %s commands" %(target + ":" + absolute_path + "*125"))
 				print("cmd=%s" % str(cmd))
-				printer.command(cmd)			
+				printer.commands(cmd)			
 			except : 
 				exceptionString = getExceptionString()
 				print("ex:%s" % str(exceptionString))
-		''' '''
+		
 		return absolute_path
 
 	def remove_file(self, destination, path):
@@ -426,8 +491,8 @@ class FileManager(object):
 	def remove_additional_metadata(self, destination, path, key):
 		self._storage(destination).remove_additional_metadata(path, key)
 
-	def get_absolute_path(self, destination, path):
-		return self._storage(destination).get_absolute_path(path)
+	def path_on_disk(self, destination, path):
+		return self._storage(destination).path_on_disk(path)
 
 	def sanitize(self, destination, path):
 		return self._storage(destination).sanitize(path)
@@ -444,8 +509,8 @@ class FileManager(object):
 	def join_path(self, destination, *path):
 		return self._storage(destination).join_path(*path)
 
-	def rel_path(self, destination, path):
-		return self._storage(destination).rel_path(path)
+	def path_in_storage(self, destination, path):
+		return self._storage(destination).path_in_storage(path)
 
 	def _storage(self, destination):
 		if not destination in self._storage_managers:

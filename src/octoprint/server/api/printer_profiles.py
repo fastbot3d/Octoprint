@@ -9,12 +9,14 @@ __copyright__ = "Copyright (C) 2014 The OctoPrint Project - Released under terms
 import copy
 
 from flask import jsonify, make_response, request, url_for
+from werkzeug.exceptions import BadRequest
 
 from octoprint.server.api import api, NO_CONTENT
 from octoprint.server.util.flask import restricted_access
 from octoprint.util import dict_merge
 
 from octoprint.server import printerProfileManager
+from octoprint.printer.profile import InvalidProfileError, CouldNotOverwriteError, SaveError
 
 
 @api.route("/printerprofiles", methods=["GET"])
@@ -26,11 +28,15 @@ def printerProfilesList():
 @restricted_access
 def printerProfilesAdd():
 	if not "application/json" in request.headers["Content-Type"]:
-		return None, None, make_response("Expected content-type JSON", 400)
+		return make_response("Expected content-type JSON", 400)
 
-	json_data = request.json
+	try:
+		json_data = request.json
+	except BadRequest:
+		return make_response("Malformed JSON body in request", 400)
+
 	if not "profile" in json_data:
-		return None, None, make_response("No profile included in request", 400)
+		return make_response("No profile included in request", 400)
 
 	base_profile = printerProfileManager.get_default()
 	if "basedOn" in json_data and isinstance(json_data["basedOn"], basestring):
@@ -42,22 +48,40 @@ def printerProfilesAdd():
 		del base_profile["id"]
 	if "name" in base_profile:
 		del base_profile["name"]
-	profile = dict_merge(base_profile, json_data["profile"])
-	if not _validate_profile(profile):
-		return None, None, make_response("Profile is invalid, missing obligatory values", 400)
+	if "default" in base_profile:
+		del base_profile["default"]
 
-	return _overwrite_profile(profile)
+	new_profile = json_data["profile"]
+	make_default = False
+	if "default" in new_profile:
+		make_default = True
+		del new_profile["default"]
+
+	profile = dict_merge(base_profile, new_profile)
+	try:
+		saved_profile = printerProfileManager.save(profile, allow_overwrite=False, make_default=make_default)
+	except InvalidProfileError:
+		return make_response("Profile is invalid", 400)
+	except CouldNotOverwriteError:
+		return make_response("Profile already exists and overwriting was not allowed", 400)
+	except Exception as e:
+		return make_response("Could not save profile: %s" % str(e), 500)
+	else:
+		return jsonify(dict(profile=_convert_profile(saved_profile)))
 
 @api.route("/printerprofiles/<string:identifier>", methods=["GET"])
 def printerProfilesGet(identifier):
 	profile = printerProfileManager.get(identifier)
 	if profile is None:
-		make_response("Unknown profile: %s" % identifier, 404)
-	return jsonify(_convert_profile(profile))
+		return make_response("Unknown profile: %s" % identifier, 404)
+	else:
+		return jsonify(_convert_profile(profile))
 
 @api.route("/printerprofiles/<string:identifier>", methods=["DELETE"])
 @restricted_access
 def printerProfilesDelete(identifier):
+	if printerProfileManager.get_current_or_default()["id"] == identifier:
+		return make_response("Cannot delete currently selected profile: %s" % identifier, 409)
 	printerProfileManager.remove(identifier)
 	return NO_CONTENT
 
@@ -65,11 +89,15 @@ def printerProfilesDelete(identifier):
 @restricted_access
 def printerProfilesUpdate(identifier):
 	if not "application/json" in request.headers["Content-Type"]:
-		return None, None, make_response("Expected content-type JSON", 400)
+		return make_response("Expected content-type JSON", 400)
 
-	json_data = request.json
+	try:
+		json_data = request.json
+	except BadRequest:
+		return make_response("Malformed JSON body in request", 400)
+
 	if not "profile" in json_data:
-		make_response("No profile included in request", 400)
+		return make_response("No profile included in request", 400)
 
 	profile = printerProfileManager.get(identifier)
 	if profile is None:
@@ -84,15 +112,17 @@ def printerProfilesUpdate(identifier):
 		del new_profile["default"]
 
 	new_profile["id"] = identifier
-	if not _validate_profile(new_profile):
-		make_response("Combined profile is invalid, missing obligatory values", 400)
 
 	try:
 		saved_profile = printerProfileManager.save(new_profile, allow_overwrite=True, make_default=make_default)
+	except InvalidProfileError:
+		return make_response("Profile is invalid", 400)
+	except CouldNotOverwriteError:
+		return make_response("Profile already exists and overwriting was not allowed", 400)
 	except Exception as e:
-		make_response("Could not save profile: %s" % e.message)
-
-	return jsonify(dict(profile=_convert_profile(saved_profile)))
+		return make_response("Could not save profile: %s" % str(e), 500)
+	else:
+		return jsonify(dict(profile=_convert_profile(saved_profile)))
 
 def _convert_profiles(profiles):
 	result = dict()
@@ -109,64 +139,3 @@ def _convert_profile(profile):
 	converted["default"] = (profile["id"] == default)
 	converted["current"] = (profile["id"] == current)
 	return converted
-
-def _validate_profile(profile):
-	if not "name" in profile \
-			and "volume" in profile \
-			and "width" in profile["volume"] \
-			and "depth" in profile["volume"] \
-			and "height" in profile["volume"] \
-			and "formFactor" in profile["volume"] \
-			and "heatedBed" in profile \
-			and "extruder" in profile \
-			and "count" in profile["extruder"] \
-			and "offsets" in profile["extruder"] \
-			and len(profile["extruder"]["offsets"]) == profile["extruder"]["count"]:
-		return False
-
-	for dimension in ("width", "depth", "height"):
-		try:
-			profile["volume"][dimension] = float(profile["volume"][dimension])
-		except:
-			return False
-
-	if not profile["volume"]["formFactor"] in ("rectangular", "circular"):
-		return False
-
-	try:
-		profile["heatedBed"] = bool(profile["heatedBed"])
-	except:
-		return False
-
-	try:
-		profile["extruder"]["count"] = int(profile["extruder"]["count"])
-	except:
-		return False
-
-	converted_offsets = []
-	for offset in profile["extruder"]["offsets"]:
-		try:
-			#converted_offsets.append((float(offset[0]), float(offset[1]), float(offset[2])))
-			converted_offsets.append(offset)
-			
-		except:
-			from octoprint.util import getExceptionString			
-			exceptionString = getExceptionString()
-			print("lkj except : %s" % exceptionString)			
-			return False
-	profile["extruder"]["offsets"] = converted_offsets
-
-	return True
-
-def _overwrite_profile(profile):
-	if not "id" in profile and not "name" in profile:
-		return None, None, make_response("Profile must contain either id or name")
-	elif not "name" in profile:
-		return None, None, make_response("Profile must contain a name")
-
-	try:
-		saved_profile = printerProfileManager.save(profile, allow_overwrite=False)
-	except Exception as e:
-		return None, None, make_response("Could not save profile: %s" % e.message)
-
-	return jsonify(dict(profile=_convert_profile(saved_profile)))

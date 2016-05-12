@@ -20,16 +20,20 @@ from . import watchdog
 
 def apiKeyRequestHandler():
 	"""
-	All requests in this blueprint need to be made supplying an API key. This may be the UI_API_KEY, in which case
-	the underlying request processing will directly take place, or it may be the global or a user specific case. In any
-	case it has to be present and must be valid, so anything other than the above three types will result in denying
-	the request.
+	``before_request`` handler for blueprints for which all requests need to be made supplying an API key.
+
+	This may be the UI_API_KEY, in which case the underlying request processing will directly take place, or it may be
+	the global, an app specific or a user specific one. In any case it has to be present and must be valid, so anything
+	other than the above types will result in the application denying the request.
 	"""
 
 	import octoprint.server
 
 	if _flask.request.method == 'OPTIONS' and settings().getBoolean(["api", "allowCrossOrigin"]):
 		return optionsAllowOrigin(_flask.request)
+
+	if _flask.request.endpoint == "static" or _flask.request.endpoint.endswith(".static"):
+		return
 
 	apikey = get_api_key(_flask.request)
 	if apikey is None:
@@ -62,6 +66,11 @@ def apiKeyRequestHandler():
 
 
 def corsResponseHandler(resp):
+	"""
+	``after_request`` handler for blueprints for which CORS is supported.
+
+	Sets ``Access-Control-Allow-Origin`` headers for ``Origin`` request header on response.
+	"""
 
 	# Allow crossdomain
 	allowCrossOrigin = settings().getBoolean(["api", "allowCrossOrigin"])
@@ -70,9 +79,27 @@ def corsResponseHandler(resp):
 
 	return resp
 
+def getExceptionString():
+	locationInfo = traceback.extract_tb(sys.exc_info()[2])[0]
+	return "%s: '%s' @ %s:%s:%d" % (str(sys.exc_info()[0].__name__), str(sys.exc_info()[1]), os.path.basename(locationInfo[0]), locationInfo[2], locationInfo[1])
+
+
+def noCachingResponseHandler(resp):
+	"""
+	``after_request`` handler for blueprints which shall set no caching headers
+	on their responses.
+
+	Sets ``Cache-Control``, ``Pragma`` and ``Expires`` headers accordingly
+	to prevent all client side caching from taking place.
+	"""
+
+	return flask.add_non_caching_response_headers(resp)
+
 
 def optionsAllowOrigin(request):
-	""" Always reply 200 on OPTIONS request """
+	"""
+	Shortcut for request handling for CORS OPTIONS requests to set CORS headers.
+	"""
 
 	resp = _flask.current_app.make_default_options_response()
 
@@ -131,18 +158,24 @@ class ReverseProxied(object):
 	different than what is used locally.
 
 	In nginx:
-		location /myprefix {
-			proxy_pass http://192.168.0.1:5001;
-			proxy_set_header Host $host;
-			proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-			proxy_set_header X-Scheme $scheme;
-			proxy_set_header X-Script-Name /myprefix;
-		}
+
+	.. code-block:: none
+
+	   location /myprefix {
+	       proxy_pass http://192.168.0.1:5001;
+	       proxy_set_header Host $host;
+	       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+	       proxy_set_header X-Scheme $scheme;
+	       proxy_set_header X-Script-Name /myprefix;
+	   }
 
 	Alternatively define prefix and scheme via config.yaml:
-		server:
-			baseUrl: /myprefix
-			scheme: http
+
+	.. code-block:: yaml
+
+	   server:
+	     baseUrl: /myprefix
+	     scheme: http
 
 	:param app: the WSGI application
 	:param header_script_name: the HTTP header in the wsgi environment from which to determine the prefix

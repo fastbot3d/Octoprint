@@ -29,69 +29,103 @@ import tornado.util
 import octoprint.util
 
 
+#~~ Monkey patching
+
+
+def fix_ioloop_scheduling():
+	"""
+	This monkey patches tornado's :meth:``tornado.ioloop.PeriodicCallback._schedule_next`` method so it no longer
+	blocks for long times on slow machines (RPi) when the system time happens to change by a large amount (e.g. due to
+	the first ever contact to an NTP server).
+
+	Patch by @nosyjoe on Github. See this PR against tornado: https://github.com/tornadoweb/tornado/pull/1290
+	"""
+
+	import math
+
+	# patched implementation taken from PR
+	def _schedule_next(self):
+		if self._running:
+			current_time = self.io_loop.time()
+
+			if self._next_timeout <= current_time:
+				callback_time_sec = self.callback_time / 1000.0
+				self._next_timeout += (math.floor((current_time - self._next_timeout) / callback_time_sec) + 1) * callback_time_sec
+
+			self._timeout = self.io_loop.add_timeout(self._next_timeout, self._run)
+
+	# replace original implementation with patched version
+	import tornado.ioloop
+	tornado.ioloop.PeriodicCallback._schedule_next = _schedule_next
+
+
 #~~ WSGI middleware
 
 
 @tornado.web.stream_request_body
 class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 	"""
-	A `RequestHandler` similar to `tornado.web.FallbackHandler` which fetches any files contained in the request bodies
-	of content type `multipart`, stores them in temporary files and supplies the `fallback` with the file's `name`,
-	`content_type`, `path` and `size` instead via a rewritten body.
+	A ``RequestHandler`` similar to ``tornado.web.FallbackHandler`` which fetches any files contained in the request bodies
+	of content type ``multipart``, stores them in temporary files and supplies the ``fallback`` with the file's ``name``,
+	``content_type``, ``path`` and ``size`` instead via a rewritten body.
 
 	Basically similar to what the nginx upload module does.
 
 	Basic request body example:
 
-		------WebKitFormBoundarypYiSUx63abAmhT5C
-		Content-Disposition: form-data; name="file"; filename="test.gcode"
-		Content-Type: application/octet-stream
+	.. code-block:: none
 
-		...
-		------WebKitFormBoundarypYiSUx63abAmhT5C
-		Content-Disposition: form-data; name="apikey"
+	    ------WebKitFormBoundarypYiSUx63abAmhT5C
+	    Content-Disposition: form-data; name="file"; filename="test.gcode"
+	    Content-Type: application/octet-stream
 
-		my_funny_apikey
-		------WebKitFormBoundarypYiSUx63abAmhT5C
-		Content-Disposition: form-data; name="select"
+	    ...
+	    ------WebKitFormBoundarypYiSUx63abAmhT5C
+	    Content-Disposition: form-data; name="apikey"
 
-		true
-		------WebKitFormBoundarypYiSUx63abAmhT5C--
+	    my_funny_apikey
+	    ------WebKitFormBoundarypYiSUx63abAmhT5C
+	    Content-Disposition: form-data; name="select"
+
+	    true
+	    ------WebKitFormBoundarypYiSUx63abAmhT5C--
 
 	That would get turned into:
 
-		------WebKitFormBoundarypYiSUx63abAmhT5C
-		Content-Disposition: form-data; name="apikey"
+	.. code-block:: none
 
-		my_funny_apikey
-		------WebKitFormBoundarypYiSUx63abAmhT5C
-		Content-Disposition: form-data; name="select"
+	    ------WebKitFormBoundarypYiSUx63abAmhT5C
+	    Content-Disposition: form-data; name="apikey"
 
-		true
-		------WebKitFormBoundarypYiSUx63abAmhT5C
-		Content-Disposition: form-data; name="file.path"
+	    my_funny_apikey
+	    ------WebKitFormBoundarypYiSUx63abAmhT5C
+	    Content-Disposition: form-data; name="select"
 
-		/tmp/tmpzupkro
-		------WebKitFormBoundarypYiSUx63abAmhT5C
-		Content-Disposition: form-data; name="file.name"
+	    true
+	    ------WebKitFormBoundarypYiSUx63abAmhT5C
+	    Content-Disposition: form-data; name="file.path"
 
-		test.gcode
-		------WebKitFormBoundarypYiSUx63abAmhT5C
-		Content-Disposition: form-data; name="file.content_type"
+	    /tmp/tmpzupkro
+	    ------WebKitFormBoundarypYiSUx63abAmhT5C
+	    Content-Disposition: form-data; name="file.name"
 
-		application/octet-stream
-		------WebKitFormBoundarypYiSUx63abAmhT5C
-		Content-Disposition: form-data; name="file.size"
+	    test.gcode
+	    ------WebKitFormBoundarypYiSUx63abAmhT5C
+	    Content-Disposition: form-data; name="file.content_type"
 
-		349182
-		------WebKitFormBoundarypYiSUx63abAmhT5C--
+	    application/octet-stream
+	    ------WebKitFormBoundarypYiSUx63abAmhT5C
+	    Content-Disposition: form-data; name="file.size"
+
+	    349182
+	    ------WebKitFormBoundarypYiSUx63abAmhT5C--
 
 	The underlying application can then access the contained files via their respective paths and just move them
 	where necessary.
 	"""
 
-	# the request methods that may contain a request body
 	BODY_METHODS = ("POST", "PATCH", "PUT")
+	""" The request methods that may contain a request body. """
 
 	def initialize(self, fallback, file_prefix="tmp", file_suffix="", path=None, suffixes=None):
 		if not suffixes:
@@ -132,8 +166,8 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 	def prepare(self):
 		"""
 		Prepares the processing of the request. If it's a request that may contain a request body (as defined in
-		`UploadStorageFallbackHandler.BODY_METHODS) prepares the multipart parsing if content type fits. If it's a
-		body-less request, just calls the `fallback` with an empty body and finishes the request.
+		:attr:`UploadStorageFallbackHandler.BODY_METHODS`) prepares the multipart parsing if content type fits. If it's a
+		body-less request, just calls the ``fallback`` with an empty body and finishes the request.
 		"""
 		if self.request.method in UploadStorageFallbackHandler.BODY_METHODS:
 			self._bytes_left = self.request.headers.get("Content-Length", 0)
@@ -164,7 +198,7 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 	def data_received(self, chunk):
 		"""
 		Called by Tornado on receiving a chunk of the request body. If request is a multipart request, takes care of
-		processing the multipart data structure via `self._process_multipart_data`. If not, just adds the chunk to
+		processing the multipart data structure via :func:`_process_multipart_data`. If not, just adds the chunk to
 		internal in-memory buffer.
 
 		:param chunk: chunk of data received from Tornado
@@ -177,7 +211,7 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 			self._buffer = data
 
 	def is_multipart(self):
-		"""Checks whether this request is a `multipart` request"""
+		"""Checks whether this request is a ``multipart`` request"""
 		return self._content_type is not None and self._content_type.startswith("multipart")
 
 	def _process_multipart_data(self, data):
@@ -211,7 +245,7 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 			self._on_part_header(self._buffer[delimiter_len+2:end_of_header])
 			self._buffer = self._buffer[end_of_header + 4:]
 
-		if delimiter_loc != -1 and self._buffer[delimiter_len:delimiter_len+2] == "--":
+		if delimiter_loc != -1 and self._buffer.strip() == delimiter + "--":
 			# we saw the last boundary and are at the end of our request
 			if self._current_part:
 				self._on_part_finish(self._current_part)
@@ -221,7 +255,7 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 
 	def _on_part_header(self, header):
 		"""
-		Called for a new multipart header, takes care of parsing the header and calling `self._on_part` with the
+		Called for a new multipart header, takes care of parsing the header and calling :func:`_on_part` with the
 		relevant data, setting the current part in the process.
 
 		:param header: header to parse
@@ -253,23 +287,24 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 
 	def _on_part_start(self, name, content_type, filename=None):
 		"""
-		Called for new parts in the multipart stream. If `filename` is given creates new `file` part (which leads
-		to storage of the data as temporary file on disk), if not creates a new `data` part (which stores
+		Called for new parts in the multipart stream. If ``filename`` is given creates new ``file`` part (which leads
+		to storage of the data as temporary file on disk), if not creates a new ``data`` part (which stores
 		incoming data in memory).
 
-		Structure of `file` parts:
+		Structure of ``file`` parts:
 
-		* `name`: name of the part
-		* `filename`: filename associated with the part
-		* `path`: path to the temporary file storing the file's data
-		* `content_type`: content type of the part
-		* `file`: file handle for the temporary file (mode "wb", not deleted on close!)
+		* ``name``: name of the part
+		* ``filename``: filename associated with the part
+		* ``path``: path to the temporary file storing the file's data
+		* ``content_type``: content type of the part
+		* ``file``: file handle for the temporary file (mode "wb", not deleted on close, will be deleted however after
+		  handling of the request has finished in :func:`_handle_method`)
 
-		Structure of `data` parts:
+		Structure of ``data`` parts:
 
-		* `name`: name of the part
-		* `content_type`: content type of the part
-		* `data`: bytes of the part (initialized to "")
+		* ``name``: name of the part
+		* ``content_type``: content type of the part
+		* ``data``: bytes of the part (initialized to an empty string)
 
 		:param name: name of the part
 		:param content_type: content type of the part
@@ -291,7 +326,7 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 
 	def _on_part_data(self, part, data):
 		"""
-		Called when new bytes are received for the given `part`, takes care of writing them to their storage.
+		Called when new bytes are received for the given ``part``, takes care of writing them to their storage.
 
 		:param part: part for which data was received
 		:param data: data chunk which was received
@@ -304,7 +339,7 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 	def _on_part_finish(self, part):
 		"""
 		Called when a part gets closed, takes care of storing the finished part in the internal parts storage and for
-		`file` parts closing the temporary file and storing the part in the internal files storage.
+		``file`` parts closing the temporary file and storing the part in the internal files storage.
 
 		:param part: part which was closed
 		"""
@@ -318,21 +353,31 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 	def _on_request_body_finish(self):
 		"""
 		Called when the request body has been read completely. Takes care of creating the replacement body out of the
-		logged parts, turning `file` parts into new
-		:return:
+		logged parts, turning ``file`` parts into new ``data`` parts.
 		"""
 
 		self._new_body = b""
 		for name, part in self._parts.iteritems():
 			if "filename" in part:
 				# add form fields for filename, path, size and content_type for all files contained in the request
-				fields = dict((self._suffixes[key], value) for (key, value) in dict(name=part["filename"], path=part["path"], size=str(os.stat(part["path"]).st_size), content_type=part["content_type"]).iteritems())
+				if not "path" in part:
+					continue
+
+				parameters = dict(
+					name=part["filename"],
+					path=part["path"],
+					size=str(os.stat(part["path"]).st_size)
+				)
+				if "content_type" in part:
+					parameters["content_type"] = part["content_type"]
+
+				fields = dict((self._suffixes[key], value) for (key, value) in parameters.iteritems())
 				for n, p in fields.iteritems():
 					key = name + "." + n
 					self._new_body += b"--%s\r\n" % self._multipart_boundary
 					self._new_body += b"Content-Disposition: form-data; name=\"%s\"\r\n" % key
 					self._new_body += b"\r\n"
-					self._new_body += p + b"\r\n"
+					self._new_body += b"%s\r\n" % p
 			elif "data" in part:
 				self._new_body += b"--%s\r\n" % self._multipart_boundary
 				value = part["data"]
@@ -345,8 +390,8 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 
 	def _handle_method(self, *args, **kwargs):
 		"""
-		Handler for any request method, takes care of defining the new request body if necessary and forwarding
-		the current request and changed body to the `fallback`.
+		Takes care of defining the new request body if necessary and forwarding
+		the current request and changed body to the ``fallback``.
 		"""
 
 		# determine which body to supply
@@ -373,7 +418,7 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 		finally:
 			# make sure the temporary files are removed again
 			for f in self._files:
-				octoprint.util.silentRemove(f)
+				octoprint.util.silent_remove(f)
 
 	# make all http methods trigger _handle_method
 	get = _handle_method
@@ -387,20 +432,22 @@ class UploadStorageFallbackHandler(tornado.web.RequestHandler):
 
 class WsgiInputContainer(object):
 	"""
-	A WSGI container for use with Tornado that allows supplying the request body to be used for `wsgi.input` in the
+	A WSGI container for use with Tornado that allows supplying the request body to be used for ``wsgi.input`` in the
 	generated WSGI environment upon call.
 
-	A `RequestHandler` can thus provide the WSGI application with a stream for the request body, or a modified body.
+	A ``RequestHandler`` can thus provide the WSGI application with a stream for the request body, or a modified body.
 
 	Example usage:
 
-		wsgi_app = octoprint.server.util.WsgiInputContainer(octoprint_app)
-		application = tornado.web.Application([
-			(r".*", UploadStorageFallbackHandler, dict(fallback=wsgi_app),
-		])
+	.. code-block:: python
 
-	The implementation logic is basically the same as `tornado.wsgi.WSGIContainer` but the `__call__` and `environ`
-	methods have been adjusted to for an optionally supplied `body` argument which is then used for `wsgi.input`.
+	   wsgi_app = octoprint.server.util.WsgiInputContainer(octoprint_app)
+	   application = tornado.web.Application([
+	       (r".*", UploadStorageFallbackHandler, dict(fallback=wsgi_app),
+	   ])
+
+	The implementation logic is basically the same as ``tornado.wsgi.WSGIContainer`` but the ``__call__`` and ``environ``
+	methods have been adjusted to allow for an optionally supplied ``body`` argument which is then used for ``wsgi.input``.
 	"""
 
 	def __init__(self, wsgi_application):
@@ -408,10 +455,10 @@ class WsgiInputContainer(object):
 
 	def __call__(self, request, body=None):
 		"""
-		Wraps the call against the WSGI app, deriving the WSGI environment from the supplied Tornado `HTTPServerRequest`.
+		Wraps the call against the WSGI app, deriving the WSGI environment from the supplied Tornado ``HTTPServerRequest``.
 
-		:param request: the `tornado.httpserver.HTTPServerRequest` to derive the WSGI environment from
-		:param body: an optional body  to use as `wsgi.input` instead of `request.body`, can be a string or a stream
+		:param request: the ``tornado.httpserver.HTTPServerRequest`` to derive the WSGI environment from
+		:param body: an optional body  to use as ``wsgi.input`` instead of ``request.body``, can be a string or a stream
 		"""
 
 		data = {}
@@ -456,13 +503,13 @@ class WsgiInputContainer(object):
 	@staticmethod
 	def environ(request, body=None):
 		"""
-		Converts a `tornado.httputil.HTTPServerRequest` to a WSGI environment.
+		Converts a ``tornado.httputil.HTTPServerRequest`` to a WSGI environment.
 
-		An optional `body` to be used for populating `wsgi.input` can be supplied (either a string or a stream). If not
-		supplied, `request.body` will be wrapped into a `io.BytesIO` stream and used instead.
+		An optional ``body`` to be used for populating ``wsgi.input`` can be supplied (either a string or a stream). If not
+		supplied, ``request.body`` will be wrapped into a ``io.BytesIO`` stream and used instead.
 
-		:param request: the `tornado.httpserver.HTTPServerRequest` to derive the WSGI environment from
-		:param body: an optional body  to use as `wsgi.input` instead of `request.body`, can be a string or a stream
+		:param request: the ``tornado.httpserver.HTTPServerRequest`` to derive the WSGI environment from
+		:param body: an optional body  to use as ``wsgi.input`` instead of ``request.body``, can be a string or a stream
 		"""
 		from tornado.wsgi import to_wsgi_str
 		import sys
@@ -530,19 +577,19 @@ class WsgiInputContainer(object):
 
 class CustomHTTPServer(tornado.httpserver.HTTPServer):
 	"""
-	Custom implementation of `tornado.httpserver.HTTPServer` that allows defining max body sizes depending on path and
+	Custom implementation of ``tornado.httpserver.HTTPServer`` that allows defining max body sizes depending on path and
 	method.
 
-	The implementation is mostly taken from `tornado.httpserver.HTTPServer`, the only difference is the creation
-	of a `CustomHTTP1ConnectionParameters` instance instead of `tornado.http1connection.HTTP1ConnectionParameters`
-	which is supplied with the two new constructor arguments `max_body_sizes` and `max_default_body_size` and the
-	creation of a `CustomHTTP1ServerConnection` instead of a `tornado.http1connection.HTTP1ServerConnection` upon
+	The implementation is mostly taken from ``tornado.httpserver.HTTPServer``, the only difference is the creation
+	of a ``CustomHTTP1ConnectionParameters`` instance instead of ``tornado.http1connection.HTTP1ConnectionParameters``
+	which is supplied with the two new constructor arguments ``max_body_sizes`` and ``max_default_body_size`` and the
+	creation of a ``CustomHTTP1ServerConnection`` instead of a ``tornado.http1connection.HTTP1ServerConnection`` upon
 	connection by a client.
 
-	`max_body_sizes` is expected to be an iterable containing tuples of the form (method, path regex, maximum body size),
+	``max_body_sizes`` is expected to be an iterable containing tuples of the form (method, path regex, maximum body size),
 	with method and path regex having to match in order for maximum body size to take affect.
 
-	`default_max_body_size` is the default maximum body size to apply if no specific one from `max_body_sizes` matches.
+	``default_max_body_size`` is the default maximum body size to apply if no specific one from ``max_body_sizes`` matches.
 	"""
 
 	def __init__(self, request_callback, no_keep_alive=False, io_loop=None,
@@ -580,9 +627,9 @@ class CustomHTTPServer(tornado.httpserver.HTTPServer):
 
 class CustomHTTP1ServerConnection(tornado.http1connection.HTTP1ServerConnection):
 	"""
-	A custom implementation of `tornado.http1connection.HTTP1ServerConnection` which utilizes a `CustomHTTP1Connection`
-	instead of a `tornado.http1connection.HTTP1Connection` in `_server_request_loop`. The implementation logic is
-	otherwise the same as `tornado.http1connection.HTTP1ServerConnection`.
+	A custom implementation of ``tornado.http1connection.HTTP1ServerConnection`` which utilizes a ``CustomHTTP1Connection``
+	instead of a ``tornado.http1connection.HTTP1Connection`` in ``_server_request_loop``. The implementation logic is
+	otherwise the same as ``tornado.http1connection.HTTP1ServerConnection``.
 	"""
 
 	@tornado.gen.coroutine
@@ -614,25 +661,25 @@ class CustomHTTP1ServerConnection(tornado.http1connection.HTTP1ServerConnection)
 
 class CustomHTTP1Connection(tornado.http1connection.HTTP1Connection):
 	"""
-	A custom implementation of `tornado.http1connection.HTTP1Connection` which upon checking the `Content-Length` of
-	the request against the configured maximum utilizes `max_body_sizes` and `default_max_body_size` as a fallback.
+	A custom implementation of ``tornado.http1connection.HTTP1Connection`` which upon checking the ``Content-Length`` of
+	the request against the configured maximum utilizes ``max_body_sizes`` and ``default_max_body_size`` as a fallback.
 	"""
 
 	def __init__(self, stream, is_client, params=None, context=None):
 		tornado.http1connection.HTTP1Connection.__init__(self, stream, is_client, params=params, context=context)
 
 		import re
-		self._max_body_sizes = map(lambda x: (x[0], re.compile(x[1]), x[2]), self.params.max_body_sizes or dict())
+		self._max_body_sizes = map(lambda x: (x[0], re.compile(x[1]), x[2]), self.params.max_body_sizes or list())
 		self._default_max_body_size = self.params.default_max_body_size or self.stream.max_buffer_size
 
 	def _read_body(self, code, headers, delegate):
 		"""
-		Basically the same as `tornado.http1connection.HTTP1Connection._read_body`, but determines the maximum
-		content length individually for the request (utilizing `._get_max_content_length`).
+		Basically the same as ``tornado.http1connection.HTTP1Connection._read_body``, but determines the maximum
+		content length individually for the request (utilizing ``._get_max_content_length``).
 
 		If the individual max content length is 0 or smaller no content length is checked. If the content length of the
 		current request exceeds the individual max content length, the request processing is aborted and an
-		`HTTPInputError` is raised.
+		``HTTPInputError`` is raised.
 		"""
 		content_length = headers.get("Content-Length")
 		if "Content-Length" in headers:
@@ -650,7 +697,7 @@ class CustomHTTP1Connection(tornado.http1connection.HTTP1Connection):
 
 			content_length = int(content_length)
 			max_content_length = self._get_max_content_length(self._request_start_line.method, self._request_start_line.path)
-			if 0 <= max_content_length < content_length:
+			if max_content_length is not None and 0 <= max_content_length < content_length:
 				raise tornado.httputil.HTTPInputError("Content-Length too long")
 		else:
 			content_length = None
@@ -676,8 +723,8 @@ class CustomHTTP1Connection(tornado.http1connection.HTTP1Connection):
 	def _get_max_content_length(self, method, path):
 		"""
 		Gets the max content length for the given method and path. Checks whether method and path match against any
-		of the specific maximum content lengths supplied in `max_body_sizes` and returns that as the maximum content
-		length if available, otherwise returns `default_max_body_size`.
+		of the specific maximum content lengths supplied in ``max_body_sizes`` and returns that as the maximum content
+		length if available, otherwise returns ``default_max_body_size``.
 
 		:param method: method of the request to match against
 		:param path: path od the request to match against
@@ -693,19 +740,18 @@ class CustomHTTP1Connection(tornado.http1connection.HTTP1Connection):
 
 class CustomHTTP1ConnectionParameters(tornado.http1connection.HTTP1ConnectionParameters):
 	"""
-	An implementation of `tornado.http1connection.HTTP1ConnectionParameters` that adds to new parameters
-	`max_body_sizes` and `default_max_body_size`.
+	An implementation of ``tornado.http1connection.HTTP1ConnectionParameters`` that adds two new parameters
+	``max_body_sizes`` and ``default_max_body_size``.
 
-	For a description of these please see the documentation of `CustomHTTPServer` above.
+	For a description of these please see the documentation of ``CustomHTTPServer`` above.
 	"""
 
 	def __init__(self, *args, **kwargs):
 		tornado.http1connection.HTTP1ConnectionParameters.__init__(self, args, kwargs)
-		self.max_body_sizes = kwargs["max_body_sizes"] if "max_body_sizes" in kwargs else dict()
-		self.default_max_body_size = kwargs["default_max_body_size"] if "default_max_body_size" in kwargs else dict()
+		self.max_body_sizes = kwargs["max_body_sizes"] if "max_body_sizes" in kwargs else list()
+		self.default_max_body_size = kwargs["default_max_body_size"] if "default_max_body_size" in kwargs else None
 
 #~~ customized large response handler
-
 #lkj 
 class LkjDownFileHandler(tornado.web.RequestHandler):
 	def get(self):
@@ -714,11 +760,11 @@ class LkjDownFileHandler(tornado.web.RequestHandler):
 		
 		filename = self.request.uri
 		filename = filename.split("=", 2)
-		#print("filename:%s" % str(filename))
+		print("filename:%s" % str(filename))
 		
 		from octoprint.server import fileManager
 		baseFolder = fileManager._storage("fbotSdcard").get_basefolder()
-		#print("lkj downloadSDGcodeFiles 3.31 baseFolder:%s" % baseFolder )
+		print("lkj downloadSDGcodeFiles 3.31 baseFolder:%s" % baseFolder )
 			
 		
 		print("lkj downloadSDGcodeFiles 4, filename[1]=%s" % str(filename[1]))
@@ -738,24 +784,76 @@ class LkjDownFileHandler(tornado.web.RequestHandler):
 		self.finish()
 	
 
-	
-
 class LargeResponseHandler(tornado.web.StaticFileHandler):
+	"""
+	Customized `tornado.web.StaticFileHandler <http://tornado.readthedocs.org/en/branch4.0/web.html#tornado.web.StaticFileHandler>`_
+	that allows delivery of the requested resource as attachment and access and request path validation through
+	optional callbacks. Note that access validation takes place before path validation.
 
-	def initialize(self, path, default_filename=None, as_attachment=False, access_validation=None):
+	Arguments:
+	   path (str): The system path from which to serve files (this will be forwarded to the ``initialize`` method of
+	       :class:``~tornado.web.StaticFileHandler``)
+	   default_filename (str): The default filename to serve if none is explicitely specified and the request references
+	       a subdirectory of the served path (this will be forwarded to the ``initialize`` method of
+	       :class:``~tornado.web.StaticFileHandler`` as the ``default_filename`` keyword parameter). Defaults to ``None``.
+	   as_attachment (bool): Whether to serve requested files with ``Content-Disposition: attachment`` header (``True``)
+	       or not. Defaults to ``False``.
+	   allow_client_caching (bool): Whether to allow the client to cache (by not setting any ``Cache-Control`` or
+	       ``Expires`` headers on the response) or not.
+	   access_validation (function): Callback to call in the ``get`` method to validate access to the resource. Will
+	       be called with ``self.request`` as parameter which contains the full tornado request object. Should raise
+	       a ``tornado.web.HTTPError`` if access is not allowed in which case the request will not be further processed.
+	       Defaults to ``None`` and hence no access validation being performed.
+	   path_validation (function): Callback to call in the ``get`` method to validate the requested path. Will be called
+	       with the requested path as parameter. Should raise a ``tornado.web.HTTPError`` (e.g. an 404) if the requested
+	       path does not pass validation in which case the request will not be further processed.
+	       Defaults to ``None`` and hence no path validation being performed.
+	   etag_generator (function): Callback to call for generating the value of the ETag response header. Will be
+	       called with the response handler as parameter. May return ``None`` to prevent the ETag response header
+	       from being set. If not provided the last modified time of the file in question will be used as returned
+	       by ``get_content_version``.
+	"""
+
+	def initialize(self, path, default_filename=None, as_attachment=False, allow_client_caching=True,
+	               access_validation=None, path_validation=None, etag_generator=None,
+	               mime_type_guesser=None):
 		tornado.web.StaticFileHandler.initialize(self, os.path.abspath(path), default_filename)
 		self._as_attachment = as_attachment
+		self._allow_client_caching = allow_client_caching
 		self._access_validation = access_validation
+		self._path_validation = path_validation
+		self._etag_generator = etag_generator
+		self._mime_type_guesser = mime_type_guesser
 
 	def get(self, path, include_body=True):
 		if self._access_validation is not None:
 			self._access_validation(self.request)
+		if self._path_validation is not None:
+			self._path_validation(path)
 		result = tornado.web.StaticFileHandler.get(self, path, include_body=include_body)
 		return result
 
 	def set_extra_headers(self, path):
 		if self._as_attachment:
 			self.set_header("Content-Disposition", "attachment")
+
+		if not self._allow_client_caching:
+			self.set_header("Cache-Control", "max-age=0, must-revalidate, private")
+			self.set_header("Expires", "-1")
+
+	def compute_etag(self):
+		if self._etag_generator is not None:
+			return self._etag_generator(self)
+		else:
+			return self.get_content_version(self.absolute_path)
+
+	def get_content_type(self):
+		if self._mime_type_guesser is not None:
+			type = self._mime_type_guesser(self.absolute_path)
+			if type is not None:
+				return type
+
+		return tornado.web.StaticFileHandler.get_content_type(self)
 
 	@classmethod
 	def get_content_version(cls, abspath):
@@ -766,7 +864,32 @@ class LargeResponseHandler(tornado.web.StaticFileHandler):
 ##~~ URL Forward Handler for forwarding requests to a preconfigured static URL
 
 
-class UrlForwardHandler(tornado.web.RequestHandler):
+class UrlProxyHandler(tornado.web.RequestHandler):
+	"""
+	`tornado.web.RequestHandler <http://tornado.readthedocs.org/en/branch4.0/web.html#request-handlers>`_ that proxies
+	requests to a preconfigured url and returns the response. Allows delivery of the requested content as attachment
+	and access validation through an optional callback.
+
+	This will use `tornado.httpclient.AsyncHTTPClient <http://tornado.readthedocs.org/en/branch4.0/httpclient.html#tornado.httpclient.AsyncHTTPClient>`_
+	for making the request to the configured endpoint and return the body of the client response with the status code
+	from the client response and the following headers:
+
+	  * ``Date``, ``Cache-Control``, ``Expires``, ``ETag``, ``Server``, ``Content-Type`` and ``Location`` will be copied over.
+	  * If ``as_attachment`` is set to True, ``Content-Disposition`` will be set to ``attachment``. If ``basename`` is
+	    set including the attachement's ``filename`` attribute will be set to the base name followed by the extension
+	    guessed based on the MIME type from the ``Content-Type`` header of the response. If no extension can be guessed
+	    no ``filename`` attribute will be set.
+
+	Arguments:
+	   url (str): URL to forward any requests to. A 404 response will be returned if this is not set. Defaults to ``None``.
+	   as_attachment (bool): Whether to serve files with ``Content-Disposition: attachment`` header (``True``)
+	       or not. Defaults to ``False``.
+	   basename (str): base name of file names to return as part of the attachment header, see above. Defaults to ``None``.
+	   access_validation (function): Callback to call in the ``get`` method to validate access to the resource. Will
+	       be called with ``self.request`` as parameter which contains the full tornado request object. Should raise
+	       a ``tornado.web.HTTPError`` if access is not allowed in which case the request will not be further processed.
+	       Defaults to ``None`` and hence no access validation being performed.
+	"""
 
 	def initialize(self, url=None, as_attachment=False, basename=None, access_validation=None):
 		tornado.web.RequestHandler.initialize(self)
@@ -801,7 +924,7 @@ class UrlForwardHandler(tornado.web.RequestHandler):
 		filename = None
 
 		self.set_status(response.code)
-		for name in ("Date", "Cache-Control", "Server", "Content-Type", "Location"):
+		for name in ("Date", "Cache-Control", "Server", "Content-Type", "Location", "Expires", "ETag"):
 			value = response.headers.get(name)
 			if value:
 				self.set_header(name, value)
@@ -842,7 +965,7 @@ def access_validation_factory(app, login_manager, validator):
 	Creates an access validation wrapper using the supplied validator.
 
 	:param validator: the access validator to use inside the validation wrapper
-	:return: an access validation wrapper taking a request as parameter and performing the request validation
+	:return: an access validator taking a request as parameter and performing the request validation
 	"""
 	def f(request):
 		"""
@@ -858,4 +981,17 @@ def access_validation_factory(app, login_manager, validator):
 			app.session_interface.open_session(app, flask.request)
 			login_manager.reload_user()
 			validator(flask.request)
+	return f
+
+def path_validation_factory(path_filter, status_code=404):
+	"""
+	Creates a request path validation wrapper returning the defined status code if the supplied path_filter returns False.
+
+	:param path_filter: the path filter to use on the requested path, should return False for requests that should
+	   be responded with the provided error code.
+	:return: a request path validator taking a request path as parameter and performing the request validation
+	"""
+	def f(path):
+		if not path_filter(path):
+			raise tornado.web.HTTPError(status_code)
 	return f

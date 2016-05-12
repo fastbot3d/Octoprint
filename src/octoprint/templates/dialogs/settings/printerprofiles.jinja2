@@ -1,0 +1,1018 @@
+<h3>{{ _('Printer Profiles') }}</h3>
+<table class="table table-striped table-hover table-condensed table-hover" id="settings_printerProfiles_profiles">
+    <thead>
+    <tr>
+        <th class="settings_printerProfiles_profiles_name">{{ _('Name') }}</th>
+        <th class="settings_printerProfiles_profiles_model">{{ _('Model') }}</th>
+        <th class="settings_printerProfiles_profiles_action">{{ _('Action') }}</th>
+    </tr>
+    </thead>
+    <tbody data-bind="foreach: printerProfiles.profiles.paginatedItems">
+    <tr data-bind="attr: {title: name}">
+        <td class="settings_printerProfiles_profiles_name"><span class="icon-star" data-bind="invisible: !isdefault()"></span> <span data-bind="text: name"></span></td>
+        <td class="settings_printerProfiles_profiles_model" data-bind="text: model"></td>
+        <td class="settings_printerProfiles_profiles_action">
+            <a href="#" class="icon-star" title="{{ _('Set as default profile') }}" data-bind="click: function() { $root.printerProfiles.makeDefault($data); }, css: {disabled: $root.printerProfiles.requestInProgress()}, enabled: !$root.printerProfiles.requestInProgress()"></a>&nbsp;|&nbsp;<a href="#" class="icon-pencil" title="{{ _('Edit Profile') }}" data-bind="click: function() { $root.printerProfiles.showEditProfileDialog($data); }, css: {disabled: $root.printerProfiles.requestInProgress()}, enabled: !$root.printerProfiles.requestInProgress()"></a>&nbsp;|&nbsp;<a href="#" class="icon-trash" title="{{ _('Delete Profile') }}" data-bind="click: function() { $root.printerProfiles.removeProfile($data); }, css: {disabled: $root.printerProfiles.requestInProgress()}, enabled: !$root.printerProfiles.requestInProgress()"></a>
+        </td>
+    </tr>
+    </tbody>
+</table>
+
+<div class="pagination pagination-mini pagination-centered">
+    <ul>
+        <li data-bind="css: {disabled: printerProfiles.profiles.currentPage() === 0}"><a href="#" data-bind="click: printerProfiles.profiles.prevPage">«</a></li>
+    </ul>
+    <ul data-bind="foreach: printerProfiles.profiles.pages">
+        <li data-bind="css: { active: $data.number === $root.printerProfiles.profiles.currentPage(), disabled: $data.number === -1 }"><a href="#" data-bind="text: $data.text, click: function() { $root.printerProfiles.profiles.changePage($data.number); }"></a></li>
+    </ul>
+    <ul>
+        <li data-bind="css: {disabled: printerProfiles.profiles.currentPage() === printerProfiles.profiles.lastPage()}"><a href="#" data-bind="click: printerProfiles.profiles.nextPage">»</a></li>
+    </ul>
+</div>
+
+
+<button class="btn pull-right" data-bind="click: function() { $root.printerProfiles.showEditProfileDialog(); }">{{ _('Add Profile...') }}</button>
+
+<div id="settings_printerProfiles_editDialog" class="modal hide fade">
+    <div class="modal-header">
+        <a href="#" class="close" data-dismiss="modal" aria-hidden="true">&times;</a>
+        <h3 class="modal-title"></h3>
+    </div>
+    <div class="modal-body">
+        <form class="form-horizontal">
+            <div class="control-group" data-bind="css: {error: printerProfiles.editorNameInvalid()}">
+                <label class="control-label">{{ _('Name') }}</label>
+                <div class="controls">
+                    <input type="text" data-bind="value: printerProfiles.editorName, valueUpdate: 'afterkeydown'">
+                    <span data-bind="visible: printerProfiles.editorNameInvalid()"><br><span class="help-inline">{{ _('Name must be set') }}</span></span>
+                </div>
+            </div>
+            <div class="control-group" data-bind="css: {error: printerProfiles.editorIdentifierInvalid()}">
+                <label class="control-label">{{ _('Identifier') }}</label>
+                <div class="controls">
+                    <input type="text" data-bind="value: printerProfiles.editorIdentifier, valueUpdate: 'afterkeydown', enable: printerProfiles.editorNew, css: {disabled: !printerProfiles.editorNew()}, attr: {placeholder: printerProfiles.editorIdentifierPlaceholder}">
+                    <span data-bind="visible: printerProfiles.editorIdentifierInvalid()"><br><span class="help-inline" data-bind="text: printerProfiles.editorIdentifierInvalidText()"></span></span>
+                </div>
+            </div>
+            <div class="control-group">
+                <label class="control-label">{{ _('Model') }}</label>
+                <div class="controls">
+                    <input type="text" data-bind="value: printerProfiles.editorModel">
+                </div>
+            </div>
+            <div class="control-group">
+                <label class="control-label">{{ _('Color') }}</label>
+                <div class="controls">
+                    <select data-bind="value: printerProfiles.editorColor, options: printerProfiles.availableColors, optionsText: 'name', optionsValue: 'key'">
+                    </select>
+                </div>
+            </div>
+            <!-- lkj
+            <div class="control-group">
+                <label class="control-label">{{ _('Form Factor') }}</label>
+                <div class="controls">
+                    <label class="radio"><input type="radio" name="printerProfileFormFactorGroup" value="rectangular" data-bind="checked: printerProfiles.editorVolumeFormFactor"> {{ _('Rectangular') }}</label>
+                </div>
+                <div class="controls">
+                    <label class="radio"><input type="radio" name="printerProfileFormFactorGroup" value="circular" data-bind="checked: printerProfiles.editorVolumeFormFactor"> {{ _('Circular') }}</label>
+                </div>
+            </div>
+            <div class="control-group">
+                <div class="control-group">
+                    <label class="control-label">{{ _('Origin') }}</label>
+                    <div class="controls">
+                        <select data-bind="value: printerProfiles.editorVolumeOrigin, options: printerProfiles.availableOrigins, optionsText: 'name', optionsValue: 'key'">
+                        </select>
+                    </div>
+                </div>
+            </div>
+            -->
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Machine Type') }}</label>
+                <div class="controls">
+                    <label class="radio"><input type="radio" name="printerProfileFormFactorGroup" value="XYZ" data-bind="checked: printerProfiles.editorMachineType"> {{ _('XYZ') }}</label>
+                </div>
+                <div class="controls">
+                    <label class="radio"><input type="radio" name="printerProfileFormFactorGroup" value="Delta" data-bind="checked: printerProfiles.editorMachineType"> {{ _('Delta') }}</label>
+                </div>
+                <div class="controls">
+                    <label class="radio"><input type="radio" name="printerProfileFormFactorGroup" value="CoreXY" data-bind="checked: printerProfiles.editorMachineType"> {{ _('Core XY') }}</label>
+                </div>
+            </div>
+           
+            <div  id="volume_setting" data-bind="visible: !printerProfiles.isVisibleDeltaForm()"  class="control-group">
+                <label class="control-label">{{ _('Volume(mm)') }}</label>
+                <div class="controls form-inline">
+                    <label>{{ _('X') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorVolumeWidth">
+                        <!-- <span class="add-on">mm</span> -->
+                    </div>
+               <!-- </div>
+                <div class="controls form-inline"> -->
+                    <label>{{ _('Y') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorVolumeDepth">
+                        <!--  <span class="add-on">mm</span> -->
+                    </div>
+              <!--   </div>
+                <div class="controls form-inline"> -->
+                    <label>{{ _('Z') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorVolumeHeight">
+                       <!--   <span class="add-on">mm</span> -->
+                    </div>
+                </div>
+            </div>
+            
+            <div id="delta_setting" data-bind="visible: printerProfiles.isVisibleDeltaForm()" class="control-group">
+                <label class="control-label" >{{ _('Delta') }}</label>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editordelta_diagonal_rod">
+                        <span class="add-on">mm</span>
+                    </div>
+                    <label>{{ _('diagonal_rod') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editordelta_print_radius">
+                        <span class="add-on">mm</span>
+                    </div>
+                    <label>{{ _('print_radius') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editordelta_print_available_radius">
+                        <span class="add-on">mm</span>
+                    </div>
+                    <label>{{ _('available_print_radius') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editordelta_z_home_pos">
+                        <span class="add-on">mm</span>
+                    </div>
+                    <label>{{ _('z_home_pos') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editordelta_segments_per_second">
+                        <span class="add-on"></span> 
+                    </div>
+                    <label>{{ _('segments_per_second') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorDeltaEndstopX">
+                        <span class="add-on">mm</span> 
+                    </div>
+                    <label>{{ _('Tower X Endstop adj') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorDeltaEndstopY">
+                        <span class="add-on">mm</span> 
+                    </div>
+                    <label>{{ _('Tower Y Endstop adj') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorDeltaEndstopZ">
+                        <span class="add-on">mm</span> 
+                    </div>
+                    <label>{{ _('Tower Z Endstop adj') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorDeltaTowerA">
+                        <span class="add-on">mm</span> 
+                    </div>
+                    <label>{{ _('Tower X radius adj') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorDeltaTowerB">
+                        <span class="add-on">mm</span> 
+                    </div>
+                    <label>{{ _('Tower Y radius adj') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorDeltaTowerC">
+                        <span class="add-on">mm</span> 
+                    </div>
+                    <label>{{ _('Tower Z radius adj') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorDeltaTowerI">
+                        <span class="add-on">mm</span> 
+                    </div>
+                    <label>{{ _('Tower X diagonal rod adj') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorDeltaTowerJ">
+                        <span class="add-on">mm</span> 
+                    </div>
+                    <label>{{ _('Tower Y diagonal rod adj') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorDeltaTowerK">
+                        <span class="add-on">mm</span> 
+                    </div>
+                    <label>{{ _('Tower Z diagonal rod adj') }}</label>
+                </div>
+            </div>            
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Heated Bed') }}</label>
+                <div class="controls">
+                    <input type="checkbox" data-bind="checked: printerProfiles.editorHeatedBed">
+                </div>
+            </div>
+            <div class="control-group">
+                <label class="control-label">{{ _('Max heat pwm') }}</label>
+                <div class="controls form-inline">					
+                    <div class="input-append">
+                        <input type="number" step="1" class="input-mini text-right" min="10" max="99" data-bind="value: printerProfiles.editorMaxHeatPwmHotend">
+                    </div>
+                    <label>{{ _('Hotend') }}</label>
+                </div>
+                <div class="controls form-inline">					
+                    <div class="input-append">
+                        <input type="number" step="1" class="input-mini text-right" min="10" max="99" data-bind="value: printerProfiles.editorMaxHeatPwmBed">
+                    </div>
+                    <label>{{ _('Bed') }}</label>
+                </div>				   
+            </div>
+            
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Max dangerous temperature(C)') }}</label>
+                <div class="controls form-inline">					
+                    <div class="input-append">
+                        <input type="number" step="1" class="input-mini text-right" min="100" max="1000" data-bind="value: printerProfiles.editorMaxDangerousThermistor">
+                    </div>
+                    <label>{{ _('Thermistor') }}</label>
+                </div>
+                <div class="controls form-inline">					
+                    <div class="input-append">
+                        <input type="number" step="1" class="input-mini text-right" min="300" max="2000" data-bind="value: printerProfiles.editorMaxDangerousThermocouple">
+                    </div>
+                    <label>{{ _('Thermocouple') }}</label>
+                </div>				   
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Axis max speed( mm/s)') }}</label>
+                <div class="controls form-inline">
+                    <label>{{ _('X') }}</label>
+                    <div class="input-append">
+                        <input type="number" class="input-mini text-right" data-bind="value: printerProfiles.editorAxisXSpeed">
+                        <!--<span class="add-on">mm/min</span> -->
+                    </div>
+                    <label class="checkbox">
+                        <input type="checkbox" data-bind="enable:!printerState.isPrinting(), checked: printerProfiles.editorAxisXInverted"> {{ _('Invert control') }}
+                    </label>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('Y') }}</label>
+                    <div class="input-append">
+                        <input type="number" class="input-mini text-right" data-bind="value: printerProfiles.editorAxisYSpeed">
+                        <!--<span class="add-on">mm/min</span> -->
+                    </div>
+                    <label class="checkbox">
+                        <input type="checkbox" data-bind="enable:!printerState.isPrinting(), checked: printerProfiles.editorAxisYInverted"> {{ _('Invert control') }}
+                    </label>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('Z') }}</label>
+                    <div class="input-append">
+                        <input type="number" class="input-mini text-right" data-bind="value: printerProfiles.editorAxisZSpeed">
+                        <!--<span class="add-on">mm/min</span> -->
+                    </div>
+                    <label class="checkbox">
+                        <input type="checkbox" data-bind="enable:!printerState.isPrinting(), checked: printerProfiles.editorAxisZInverted"> {{ _('Invert control') }}
+                    </label>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('E') }}</label>
+                    <div class="input-append">
+                        <input type="number" class="input-mini text-right" data-bind="value: printerProfiles.editorAxisESpeed">
+                        <!--<span class="add-on">mm/min</span> -->
+                    </div>
+                    <label class="checkbox">
+                        <input type="checkbox" data-bind="enable:!printerState.isPrinting(), checked: printerProfiles.editorAxisEInverted"> {{ _('Invert control') }}
+                    </label>
+                </div>
+            </div>
+            <div class="control-group">
+                <label class="control-label">{{ _('Nozzle Diameter') }}</label>
+                <div class="controls">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: printerProfiles.editorNozzleDiameter">
+                        <span class="add-on">mm</span>
+                    </div>
+                </div>
+            </div>
+            
+            {% if boardType == "BBP1" %}
+            <div class="control-group">
+                <label class="control-label">{{ _('Extend interface') }}</label>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <select data-bind="value: printerProfiles.editorExtendInterface, options: printerProfiles.availableExtendInterface, optionsText: 'name', optionsValue: 'key'">
+                        </select>
+                    </div>
+                </div> 
+            </div>
+            {% endif %}
+            
+            <!-- 
+            {% if boardType == "BBP1S" %}
+            <div class="control-group">
+                <label class="control-label">{{ _('Thermocouple 1') }}</label>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <select data-bind="value: printerProfiles.editorThermocoupleMax6675, options: printerProfiles.availableThermocouple1Connection, optionsText: 'name', optionsValue: 'key'">
+                        </select>
+                    </div>
+                </div> 
+                <label class="control-label">{{ _('Thermocouple 2') }}</label>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <select data-bind="value: printerProfiles.editorThermocoupleAd597, options: printerProfiles.availableThermocouple2Connection, optionsText: 'name', optionsValue: 'key'">
+                        </select>
+                    </div>
+                </div> 
+            </div>				    
+            {% endif %}
+            -->            
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Number of Extruders') }}</label>
+                <div class="controls">
+                    <input type="number" class="input-mini text-right" min="1" max="3" data-bind="value: printerProfiles.editorExtruders">
+                </div>
+            </div>
+            <div class="control-group" data-bind="visible: printerProfiles.editorExtruders() > 1">
+                <label class="control-label">{{ _('Nozzle Offsets (relative to first nozzle T0)') }}</label>
+                <!-- ko foreach: printerProfiles.koEditorExtruderOffsets -->
+                <div class="controls form-inline">
+                    <label>T<span data-bind="text: idx"></span>:</label>
+                    <label>X</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: x">
+                        <span class="add-on">mm</span>
+                    </div>
+                    <label>Y</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" data-bind="value: y">
+                        <span class="add-on">mm</span>
+                    </div>
+                </div>
+                <!-- /ko -->
+            </div>
+            
+            
+            <!-- lkj start -->
+            {% if boardType == "BBP1S" %}
+            <div class="control-group">
+                <label class="control-label">{{ _('Measure temperature for extruder') }}</label>            
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <select data-bind="value: printerProfiles.editorMeasureExt1, options: printerProfiles.availableMeasureTemperature, optionsText: 'name', optionsValue: 'key'"></select>
+                        <span class="add-on">Heater1</span>
+                    </div>
+                </div>            
+                <div class="controls form-inline" data-bind="visible: printerProfiles.editorExtruders() >= 2">
+                    <div class="input-append">
+                        <select data-bind="value: printerProfiles.editorMeasureExt2, options: printerProfiles.availableMeasureTemperature, optionsText: 'name', optionsValue: 'key'"></select>
+                        <span class="add-on">Heater2</span>
+                    </div>                   
+                </div>       
+                 
+                <div class="controls form-inline" data-bind="visible: printerProfiles.editorExtruders() == 3">
+                    <div class="input-append">
+                        <select data-bind="value: printerProfiles.editorMeasureExt3, options: printerProfiles.availableMeasureTemperature, optionsText: 'name', optionsValue: 'key'"></select>
+                        <span class="add-on">Heater3</span>
+                    </div>                    
+                </div>                 
+             </div>
+             {% endif %}
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Motor steps_per_unit') }}</label>
+                <div class="controls form-inline">
+                    <label>{{ _('X') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="50" data-bind="value: printerProfiles.editorStepsPerUnitX">
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('Y') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="50"  data-bind="value: printerProfiles.editorStepsPerUnitY">
+                        
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('Z') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="50"  data-bind="value: printerProfiles.editorStepsPerUnitZ">
+                        
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('E0') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="50"  data-bind="value: printerProfiles.editorStepsPerUnitE0">                        
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('E1') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="50"  data-bind="value: printerProfiles.editorStepsPerUnitE1">                        
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('E2') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="50"  data-bind="value: printerProfiles.editorStepsPerUnitE2">                        
+                    </div>
+                </div>
+            </div>        
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Homing feedrate') }}</label>
+                <div class="controls form-inline">
+                    <label>{{ _('X') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="60"  data-bind="value: printerProfiles.editorHomingFeedratesX">
+                        <span class="add-on">mm/min</span>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('Y') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="60" data-bind="value: printerProfiles.editorHomingFeedratesY">
+                        <span class="add-on">mm/min</span>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('Z') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="60" data-bind="value: printerProfiles.editorHomingFeedratesZ">
+                        <span class="add-on">mm/min</span>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('E') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="60" data-bind="value: printerProfiles.editorHomingFeedratesE">
+                        <span class="add-on">mm/min</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Stepper current') }}</label>
+                <div class="controls form-inline">
+                    <label>{{ _('X&nbsp;&nbsp; ') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="10" class="input-mini text-right" min="50" data-bind="value: printerProfiles.editorStepperCurrentX">
+                        <span class="add-on">mA</span>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('Y&nbsp;&nbsp;') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="10" class="input-mini text-right" min="50" data-bind="value: printerProfiles.editorStepperCurrentY">
+                        <span class="add-on">mA</span>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('Z&nbsp;&nbsp; ') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="10" class="input-mini text-right" min="50" data-bind="value: printerProfiles.editorStepperCurrentZ">
+                        <span class="add-on">mA</span>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('E0') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="10" class="input-mini text-right" min="50" data-bind="value: printerProfiles.editorStepperCurrentT0">
+                        <span class="add-on">mA</span>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('E1') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="10" class="input-mini text-right" min="50" data-bind="value: printerProfiles.editorStepperCurrentT1">
+                        <span class="add-on">mA</span>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('E2') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="10" class="input-mini text-right" min="50" data-bind="value: printerProfiles.editorStepperCurrentT2">
+                        <span class="add-on">mA</span>
+                    </div>
+                </div>                
+                <div class="controls form-inline">
+                    <label>{{ _('U') }}</label>
+                    <div class="input-append">
+                        <input type="number" step="10" class="input-mini text-right" min="50" data-bind="value: printerProfiles.editorStepperCurrentUSR">
+                        <span class="add-on">mA</span>
+                    </div>
+                </div> 
+            </div>
+
+        <div class="control-group">
+            <label class="control-label">{{ _('Dynamic current') }}</label>
+            <div class="controls">
+                <input type="checkbox" data-bind="checked: printerProfiles.editorDynamicCurrent">
+            </div>
+        </div>
+                                            
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Stepper mircostep') }}</label>
+                <div class="controls form-inline">
+                    <label>{{ _('X&nbsp;&nbsp; ') }}</label>
+                    <div class="input-append">
+                        <select data-bind="enable:!printerState.isPrinting(), value: printerProfiles.editorStepperMircostepX, options: printerProfiles.availableStepperMircoStep, optionsText: 'name', optionsValue: 'key'">
+                        </select>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('Y&nbsp;&nbsp; ') }}</label>
+                    <div class="input-append">
+                        <select data-bind="enable:!printerState.isPrinting(), value: printerProfiles.editorStepperMircostepY, options: printerProfiles.availableStepperMircoStep, optionsText: 'name', optionsValue: 'key'">
+                        </select>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('Z&nbsp;&nbsp; ') }}</label>
+                    <div class="input-append">
+                        <select data-bind="enable:!printerState.isPrinting(), value: printerProfiles.editorStepperMircostepZ, options: printerProfiles.availableStepperMircoStep, optionsText: 'name', optionsValue: 'key'">
+                        </select>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('E0') }}</label>
+                    <div class="input-append">
+                        <select data-bind="enable:!printerState.isPrinting(), value: printerProfiles.editorStepperMircostepT0, options: printerProfiles.availableStepperMircoStep, optionsText: 'name', optionsValue: 'key'">
+                        </select>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('E1') }}</label>
+                    <div class="input-append">
+                        <select data-bind="enable:!printerState.isPrinting(), value: printerProfiles.editorStepperMircostepT1, options: printerProfiles.availableStepperMircoStep, optionsText: 'name', optionsValue: 'key'">
+                        </select>
+                    </div>
+                </div>
+                <div class="controls form-inline">
+                    <label>{{ _('E2') }}</label>
+                    <div class="input-append">
+                        <select data-bind="enable:!printerState.isPrinting(), value: printerProfiles.editorStepperMircostepT2, options: printerProfiles.availableStepperMircoStep, optionsText: 'name', optionsValue: 'key'">
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Retract') }}</label>
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="1" min="1" class="input-mini text-right" data-bind="value: printerProfiles.editorRetractLengthLen">
+                        <span class="add-on">mm</span>
+                    </div>
+                    <label>{{ _('length ') }}</label>
+                </div>
+              
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1"  min="1" class="input-mini text-right" data-bind="value: printerProfiles.editorRetractLengthFeedrate">
+                        <span class="add-on">mm/s</span>
+                    </div>
+                    <label>{{ _('feedrate') }}</label>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Retract recover') }}</label>
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1"  min="0" class="input-mini text-right" data-bind="value: printerProfiles.editorRetractRecoverLength">
+                        <span class="add-on">mm</span>
+                    </div>
+                    <label>{{ _('&nbsp;&nbsp;length') }}</label>
+                </div>
+               
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1" min="1" class="input-mini text-right" data-bind="value: printerProfiles.editorRetractRecoverfeedrate">
+                        <span class="add-on">mm/s</span>
+                    </div>
+                    <label>{{ _('feedrate') }}</label>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Maximum Acceleration') }}</label>
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1" class="input-mini text-right" min="1"  data-bind="value: printerProfiles.editorAccelerationMaximumX">
+                        <span class="add-on">mm/s^2</span>
+                    </div>
+                    <label>{{ _('X') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1" class="input-mini text-right" min="1"  data-bind="value: printerProfiles.editorAccelerationMaximumY">
+                        <span class="add-on">mm/s^2</span>
+                    </div>
+                    <label>{{ _('Y') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1"  min="1" class="input-mini text-right" data-bind="value: printerProfiles.editorAccelerationMaximumZ">
+                        <span class="add-on">mm/s^2</span>
+                    </div>
+                    <label>{{ _('Z') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1"  min="1" class="input-mini text-right" data-bind="value: printerProfiles.editorAccelerationMaximumE">
+                        <span class="add-on">mm/s^2</span>
+                    </div>
+                    <label>{{ _('E') }}</label>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Acceleration') }}</label>
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1"  min="1" class="input-mini text-right" data-bind="value: printerProfiles.editorAccelerationMoveRetractMove">
+                        <span class="add-on">mm/s^2</span>
+                    </div>
+                    <label>{{ _('move &nbsp;') }}</label>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">{{ _('Advanced variables') }}</label>
+                
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1"  min="0" class="input-mini text-right" data-bind="value: printerProfiles.editorAdvancedVariablesMaxXYJerk">
+                        <span class="add-on">mm/s</span>
+                    </div>
+                    <label>{{ _('max xy jerk') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1"   min="0" class="input-mini text-right" data-bind="value: printerProfiles.editorAdvancedVariablesMaxZJerk">
+                        <span class="add-on">mm/s</span>
+                    </div>
+                    <label>{{ _('max z jerk &nbsp;') }}</label>
+                </div>
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1"   min="0" class="input-mini text-right" data-bind="value: printerProfiles.editorAdvancedVariablesMaxEJerk">
+                        <span class="add-on">mm/s</span>
+                    </div>
+                    <label>{{ _('max e jerk &nbsp;') }}</label>
+                </div>
+            <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1"  min="0" class="input-mini text-right" data-bind="value: printerProfiles.editorAdvancedVariablesMinimumfeedrate">
+                        <span class="add-on">mm/s</span>
+                    </div>
+                    <label>{{ _('min extrude speed') }}</label>	
+                </div>
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="1"   min="0" class="input-mini text-right" data-bind="value: printerProfiles.editorAdvancedVariablesMintravelfeedrate">
+                        <span class="add-on">mm/s</span>
+                    </div>
+                    <label>{{ _('min travel speed') }}</label>
+                </div>
+            </div>
+            
+        
+        {% if boardType == "BBP1S" %}			
+        <div class="control-group">
+                <label class="control-label">{{ _('Auto Bed Leveling') }}</label>
+                <div class="controls">
+                    <input type="checkbox" data-bind="checked: printerProfiles.editorAutoLeveling">
+                </div>
+        </div>
+        <div id="AutoLeveling_setting" data-bind="visible: printerProfiles.isVisibleAutoLevelingForm()" class="control-group">
+                <div class="control-group">
+                    <label class="control-label">{{ _('Probe device') }}</label>				    
+                    <div class="controls">
+                        <label class="radio"><input type="radio" value="Proximity" data-bind="checked: printerProfiles.editorProbeDevice"> {{ _('Proximity sensor') }}</label>
+                    </div>
+                    <div class="controls" data-bind="visible: !printerProfiles.isVisibleDeltaForm()">
+                        <label class="radio"><input type="radio" value="Servo" data-bind="checked: printerProfiles.editorProbeDevice"> {{ _('Servo motor') }}</label>
+                    </div>
+                    <div class="controls"  data-bind="visible: printerProfiles.isVisibleDeltaForm()">
+                        <label class="radio"><input type="radio" value="MinZPin" data-bind="checked: printerProfiles.editorProbeDevice"> {{ _('Z probe') }}</label>
+                    </div>
+                    <div class="controls"  data-bind="visible: printerProfiles.isVisibleDeltaForm()">
+                        <label class="radio"><input type="radio" value="FSR" data-bind="checked: printerProfiles.editorProbeDevice"> {{ _('FSR') }}</label>
+                    </div>
+                </div>
+                
+                <div class="control-group">
+                    <div class="control-group">	
+                    <label class="control-label" >{{ _('Z raise before probing') }}</label>
+                    <div class="controls form-inline">
+                            <div class="input-append">
+                                <input type="number" step="1" min="70"  class="input-mini text-right" data-bind="value: printerProfiles.editorZRaiseBeforeProbing">
+                                <span class="add-on">mm</span>
+                            </div>						
+                    </div>
+                    <label class="control-label" >{{ _('Z raise between probing') }}</label>
+                    <div class="controls form-inline">
+                            <div class="input-append">
+                                <input type="number" step="1" min="70"  class="input-mini text-right" data-bind="value: printerProfiles.editorZRaiseBetweenProbing">
+                                <span class="add-on">mm</span>
+                            </div>						
+                    </div>                
+                    </div> 
+                </div> 
+                
+                <div id="Servo_setting" data-bind="visible: printerProfiles.isVisibleServoEnable()" class="control-group">
+                    <div class="control-group">	
+                    <!-- 
+                    <label class="control-label" >{{ _('Z raise before probing') }}</label>
+                    <div class="controls form-inline">
+                            <div class="input-append">
+                                <input type="number" step="1" min="70"  class="input-mini text-right" data-bind="value: printerProfiles.editorZRaiseBeforeProbing">
+                                <span class="add-on">mm</span>
+                            </div>						
+                    </div>
+                    <label class="control-label" >{{ _('Z raise between probing') }}</label>
+                    <div class="controls form-inline">
+                            <div class="input-append">
+                                <input type="number" step="1" min="70"  class="input-mini text-right" data-bind="value: printerProfiles.editorZRaiseBetweenProbing">
+                                <span class="add-on">mm</span>
+                            </div>						
+                    </div>
+                    -->
+                    <label class="control-label" >{{ _('Endstop angles') }}</label>
+                        <div class="controls form-inline">
+                            <div class="input-append">
+                                <input type="number" step="1" min="0" max="360" class="input-mini text-right" data-bind="value: printerProfiles.editorEndstopAnglesExtend">
+                                <span class="add-on">C</span>
+                            </div>
+                            <label>{{ _('Extend') }}</label>
+                        </div>
+                        <div class="controls form-inline">
+                            <div class="input-append">
+                                <input type="number" step="1" min="0" max="360" class="input-mini text-right" data-bind="value: printerProfiles.editorEndstopAnglesRetract">
+                                <span class="add-on">C</span>
+                            </div>
+                            <label>{{ _('Retract') }}</label>
+                        </div>
+                    </div>
+                </div>                     
+                
+                <div class="control-group">
+                    <label class="control-label">{{ _('Device Offset(mm)') }}</label>				
+                    <div class="controls form-inline">					    
+                        <div class="input-append">
+                            <input type="number" step="0.01" value="0.0" class="input-mini text-right" data-bind="value: printerProfiles.editorEndstopOffsetX">
+                        </div>                                       
+                        <label>X</label>
+                        <div class="input-append">
+                            <input type="number" step="0.01"  value="0.0" class="input-mini text-right" data-bind="value: printerProfiles.editorEndstopOffsetY">
+                        </div>
+                        <label>Y</label>
+                        <div class="input-append">
+                            <input type="number" step="0.01"  value="0.0" class="input-mini text-right" data-bind="value: printerProfiles.editorEndstopOffsetZ">
+                        </div>
+                        <label>Z</label>
+                    </div>                                  
+                 </div>				     
+                <div class="control-group">
+                    <label class="control-label">{{ _('Probe Grid(mm)') }}</label>
+                    <div class="controls form-inline">					    
+                        <div class="input-append">
+                            <input type="number" step="1" min="2" max="10" class="input-mini text-right" data-bind="value: printerProfiles.editorProbeGridPoint">
+                        </div>                                       
+                        <label>Points</label>
+                    </div>
+                    
+                     <div class="control-group" data-bind="visible: printerProfiles.isVisibleDeltaDeployRetract()">
+                          <label class="control-label">{{ _('Deploy start') }}</label>   
+                            <div class="controls form-inline">	                        
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaDeployStartX">
+                                </div>
+                                <label>{{ _('X') }}</label>
+                                
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaDeployStartY">
+                                </div>
+                                <label>{{ _('Y') }}</label>
+                                                        
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaDeployStartZ">
+                                </div>			
+                                <label>{{ _('Z') }}</label>
+                            </div>
+                     </div>
+                     <div class="control-group" data-bind="visible: printerProfiles.isVisibleDeltaDeployRetract()">
+                          <label class="control-label">{{ _('Deploy end') }}</label>   
+                            <div class="controls form-inline">	                        
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaDeployEndX">
+                                </div>
+                                <label>{{ _('X') }}</label>
+                                
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaDeployEndY">
+                                </div>
+                                <label>{{ _('Y') }}</label>
+                                                        
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaDeployEndZ">
+                                </div>			
+                                <label>{{ _('Z') }}</label>
+                            </div>
+                     </div>
+                     <div class="control-group" data-bind="visible: printerProfiles.isVisibleDeltaDeployRetract()">
+                          <label class="control-label">{{ _('retract start') }}</label>   
+                            <div class="controls form-inline">	                        
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaRetractStartX">
+                                </div>
+                                <label>{{ _('X') }}</label>
+                                
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaRetractStartY">
+                                </div>
+                                <label>{{ _('Y') }}</label>
+                                                        
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaRetractStartZ">
+                                </div>			
+                                <label>{{ _('Z') }}</label>
+                            </div>
+                     </div>
+                    <div class="control-group" data-bind="visible: printerProfiles.isVisibleDeltaDeployRetract()">
+                          <label class="control-label">{{ _('retract end') }}</label>   
+                            <div class="controls form-inline">	                        
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaRetractEndX">
+                                </div>
+                                <label>{{ _('X') }}</label>
+                                
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaRetractEndY">
+                                </div>
+                                <label>{{ _('Y') }}</label>
+                                                        
+                                <div class="input-append">
+                                    <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorDeltaRetractEndZ">
+                                </div>			
+                                <label>{{ _('Z') }}</label>
+                            </div>
+                     </div>
+         
+                    <div class="controls form-inline" data-bind="visible: printerProfiles.isVisibleProximity()">					    
+                        <div class="input-append">
+                            <input type="number" step="1" min="5" class="input-mini text-right" data-bind="value: printerProfiles.editorProbeGridLeft">
+                        </div>                                       
+                        <label>Left</label>
+                        <div class="input-append">
+                            <input type="number" step="1"   min="5" class="input-mini text-right" data-bind="value: printerProfiles.editorProbeGridRight">
+                        </div>
+                        <label>Right</label>
+                    </div>  
+                    <div class="controls form-inline" data-bind="visible: printerProfiles.isVisibleProximity()">					    
+                        <div class="input-append">
+                            <input type="number" step="1"  min="5" class="input-mini text-right" data-bind="value: printerProfiles.editorProbeGridFront">
+                        </div>                                       
+                        <label>Front</label>
+                        <div class="input-append">
+                            <input type="number" step="1"   min="5" class="input-mini text-right" data-bind="value: printerProfiles.editorProbeGridBack">
+                        </div>
+                        <label>Back</label>
+                    </div> 
+               </div>                                    
+        </div>
+        {% endif %}	
+            
+        <div class="control-group">
+            <label class="control-label">{{ _('Temperature PID') }}</label>				
+        </div>
+          <div class="control-group">
+                <label class="control-label">{{ _('Extruder0 PID') }}</label>   
+                <div class="controls form-inline">	
+                    
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsT0P">
+                    </div>
+                    <label>{{ _('P') }}</label>
+                    
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsT0I">
+                    </div>
+                    <label>{{ _('I') }}</label>
+                                            
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsT0D">
+                    </div>			
+                    <label>{{ _('D') }}</label>
+                </div>
+         </div>
+        
+         <div class="control-group">
+                <label class="control-label">{{ _('Extruder1 PID') }}</label>	
+                <div class="controls form-inline">
+                    
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsT1P">
+                    </div>
+                    <label>{{ _('P') }}</label>
+                                                    
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsT1I">
+                    </div>
+                    <label>{{ _('I') }}</label>
+                                                    
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsT1D">
+                    </div>		
+                    <label>{{ _('D') }}</label>
+                </div>
+         </div>
+         <div class="control-group">
+                <label class="control-label">{{ _('Extruder2 PID') }}</label>   
+                <div class="controls form-inline">	                    
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsT2P">
+                    </div>
+                    <label>{{ _('P') }}</label>                    
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsT2I">
+                    </div>
+                    <label>{{ _('I') }}</label>                                            
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsT2D">
+                    </div>			
+                    <label>{{ _('D') }}</label>
+                </div>
+         </div>
+         
+         <div class="control-group">
+                <label class="control-label">{{ _('Bed PID') }}</label>                    
+                <div class="controls form-inline">
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsBedP">
+                    </div>
+                    <label>{{ _('P') }}</label>
+                                                    
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsBedI">
+                    </div>
+                    <label>{{ _('I') }}</label>
+                                                    
+                    <div class="input-append">
+                        <input type="number" step="0.01" class="input-mini text-right" min="0"  data-bind="value: printerProfiles.editorPidsBedD">
+                    </div>		
+                    <label>{{ _('D') }}</label>
+                </div>
+         </div>	
+            <!-- lkj end -->            
+        </form>
+    </div>
+    <div class="modal-footer">
+        <button class="btn" data-dismiss="modal" aria-hidden="true">{{ _('Abort') }}</button>
+        <button class="btn btn-primary btn-confirm" data-bind="enabled: printerProfiles.enableEditorSubmitButton, css: {disabled: !printerProfiles.enableEditorSubmitButton()}"><i class="icon-spinner icon-spin" data-bind="visible: printerProfiles.requestInProgress()"></i> {{ _('Confirm') }}</button>
+    </div>
+</div>

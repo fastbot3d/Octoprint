@@ -6,8 +6,6 @@ __license__ = 'GNU Affero General Public License http://www.gnu.org/licenses/agp
 __copyright__ = "Copyright (C) 2014 The OctoPrint Project - Released under terms of the AGPLv3 License"
 
 
-from . import s
-
 import re
 
 class SupportLocationTypes(object):
@@ -348,8 +346,12 @@ class Profile(object):
 
 	@classmethod
 	def from_cura_ini(cls, path):
+		import logging
+		logger = logging.getLogger("octoprint.plugin.cura.profile")
+
 		import os
 		if not os.path.exists(path) or not os.path.isfile(path):
+			logger.warn("Path {path} does not exist or is not a file, cannot import".format(**locals()))
 			return None
 
 		import ConfigParser
@@ -357,6 +359,7 @@ class Profile(object):
 		try:
 			config.read(path)
 		except:
+			logger.exception("Error while reading profile INI file from {path}".format(**locals()))
 			return None
 
 		arrayified_options = ["print_temperature", "filament_diameter", "start.gcode", "end.gcode"]
@@ -533,7 +536,7 @@ class Profile(object):
 			elif key == "machine_height":
 				return self._printer_profile["volume"]["height"]
 			elif key == "machine_center_is_zero":
-				return self._printer_profile["volume"]["formFactor"] == "circular"
+				return self._printer_profile["volume"]["formFactor"] == "circular" or self._printer_profile["volume"]["origin"] == "center"
 			else:
 				return None
 
@@ -561,6 +564,9 @@ class Profile(object):
 				return extruder_offsets[number][1]
 			else:
 				return 0.0
+
+		elif key == "has_heated_bed":
+			return self._printer_profile["heatedBed"]
 
 		elif key.startswith("filament_diameter"):
 			match = Profile.regex_filament_diameter.match(key)
@@ -723,13 +729,13 @@ class Profile(object):
 				prefix += "M92 E{e_steps}\n" % (e_steps)
 			temp = self.get_float("print_temperature")
 
-			bedTemp = 0
+			bed_temp = 0
 			if self.get_boolean("has_heated_bed"):
-				bedTemp = self.get_float("print_bed_temperature")
-			include_bed_temps = bedTemp > 0 and not "{print_bed_temperature}" in Profile.regex_strip_comments.sub("", contents)
+				bed_temp = self.get_float("print_bed_temperature")
+			include_bed_temp = bed_temp > 0 and not "{print_bed_temperature}" in Profile.regex_strip_comments.sub("", contents)
 
-			if include_bed_temps:
-				prefix += "M140 S{print_bed_temperature}\n"
+			if include_bed_temp:
+				prefix += "M140 S{bed_temp}\n".format(bed_temp=bed_temp)
 
 			if temp > 0 and not "{print_temperature}" in Profile.regex_strip_comments.sub("", contents):
 				if extruder_count > 0:
@@ -740,16 +746,19 @@ class Profile(object):
 							if print_temp > 0:
 								t = print_temp
 						return template.format(extruder=extruder, temp=t)
-					for n in xrange(1, extruder_count):
-						prefix += temp_line(temp, n, "M104 T{extruder} S{temp}\n")
+
+					prefix_preheat = ""
+					prefix_waitheat = ""
 					for n in xrange(0, extruder_count):
-						prefix += temp_line(temp, n, "M109 T{extruder} S{temp}\n")
-					prefix += "T0\n"
+						if n > 0:
+							prefix_preheat += temp_line(temp, n, "M104 T{extruder} S{temp}\n")
+						prefix_waitheat += temp_line(temp, n, "M109 T{extruder} S{temp}\n")
+					prefix += prefix_preheat + prefix_waitheat + "T0\n"
 				else:
 					prefix += "M109 S{temp}\n".format(temp=temp)
 
-			if include_bed_temps:
-				prefix += "M190 S{print_bed_temperature}\n".format(bedTemp=bedTemp)
+			if include_bed_temp:
+				prefix += "M190 S{bed_temp}\n".format(bed_temp=bed_temp)
 
 		else:
 			contents = self.get_gcode_template(key)

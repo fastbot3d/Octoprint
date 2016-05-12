@@ -7,91 +7,41 @@ __copyright__ = "Copyright (C) 2014 The OctoPrint Project - Released under terms
 
 from flask import request, jsonify, make_response, url_for
 
-import octoprint.util as util
 from octoprint.filemanager.destinations import FileDestinations
 from octoprint.settings import settings, valid_boolean_trues
 from octoprint.server import printer, fileManager, slicingManager, eventManager, NO_CONTENT
-from octoprint.server.util.flask import restricted_access
+from octoprint.server.util.flask import restricted_access, get_json_command_from_request
 from octoprint.server.api import api
 from octoprint.events import Events
 import octoprint.filemanager
+import octoprint.filemanager.util
+import octoprint.slicing
+
+import psutil
 
 
-#lkj add 
-@api.route("/downloadSDxx", methods=["post"])
-def downloadSDGcodeFiles():
-	data = request.json
-	
-	fileName = None
-	if "filename" in data:
-		print("lkj downloadSDGcodeFiles 3.4")
-		fileName = data["filename"]
-		
-	if "origin" in data:
-		print("lkj downloadSDGcodeFiles 3.4")
-		origin = data["origin"]	
-		
-	print("lkj downloadSDGcodeFiles request.values:%s" % str(request.values) )
-	print("lkj downloadSDGcodeFiles data:%s" % str(data) )
-	
-	if origin not in [FileDestinations.LOCAL, FileDestinations.SDCARD, FileDestinations.FastbotSDCARD]:
-		return make_response("Unknown origin: %s" % origin, 404)
-	print("lkj downloadSDGcodeFiles 1")
-	#selectAfterUpload = "select" in request.values.keys() and request.values["select"] in valid_boolean_trues
-	#printAfterSelect = "print" in request.values.keys() and request.values["print"] in valid_boolean_trues
+#~~ GCODE file handling
 
-	if origin == FileDestinations.FastbotSDCARD  and  not printer.isSdReady():
-		return jsonify("")
-	print("lkj downloadSDGcodeFiles 2")
-	
-		
-	
-	baseFolder = fileManager._storage(origin).get_basefolder()
-	print("lkj downloadSDGcodeFiles 3.31 " )
-		
-	
-	print("lkj downloadSDGcodeFiles 4")
-	fileFullName = baseFolder + "/" + fileName
-	print("lkj downloadSDGcodeFiles 5")
-	buf_size = 4096
-	print("download file handler:%s" % fileFullName)
-	response = make_response(view_function())
-	response.headers['Content-Type'] = 'application/octet-stream'
-	response.headers['Content-Disposition'] = 'attachment; filename='+fileName
-	response.write
-	return response
-	'''
-	self.set_header('Content-Type', 'application/octet-stream')
-	self.set_header('Content-Disposition', 'attachment; filename='+fileName)
-	with open(fileFullName, 'rb') as f:
-		while True:
-			data = f.read(buf_size)
-			if not data:
-				break
-			self.write(data)
-	self.finish()
-	'''
 
 @api.route("/files", methods=["GET"])
 def readGcodeFiles():
 	filter = None
 	if "filter" in request.values:
 		filter = request.values["filter"]
-	if filter is not None:
-		print("lkj readGcodeFiles filter:%s" % repr(filter) )
-	print("lkj readGcodeFiles request.values:%s" % str(request.values) )
-	
 	files = _getFileList(FileDestinations.LOCAL, filter=filter)
-	print("lkj 1 readGcodeFiles files:%s" % str(files) )
 	#lkj files.extend(_getFileList(FileDestinations.SDCARD))
+	# print("lkj 1 readGcodeFiles files:%s" % str(files) )
 	sdFree = 0
-	if printer.isSdReady():
+	sdTotal = 0
+	if printer.is_sd_ready():
 		files.extend(_getFileList(FileDestinations.FastbotSDCARD))
-		sdFree = util.getFreeBytes(fileManager._storage(FileDestinations.FastbotSDCARD).get_basefolder())
+		usageSd = psutil.disk_usage(fileManager._storage(FileDestinations.FastbotSDCARD).get_basefolder())
+		sdFree = usageSd.free
+		sdTotal = usageSd.total		
 		print("lkj 2 readGcodeFiles files:%s, sdFree:%s" % (str(files), str(sdFree)) )
-		
-	return jsonify(files=files, free=util.getFreeBytes(settings().getBaseFolder("uploads")), sdFree=sdFree)
-
+			
+	usage = psutil.disk_usage(settings().getBaseFolder("uploads"))
+	return jsonify(files=files, free=usage.free, total=usage.total, sdFree=sdFree, sdTotal=sdTotal)
 
 @api.route("/files/<string:origin>", methods=["GET"])
 def readGcodeFilesForOrigin(origin):
@@ -99,12 +49,13 @@ def readGcodeFilesForOrigin(origin):
 		return make_response("Unknown origin: %s" % origin, 404)
 
 	files = _getFileList(origin)
-	print("lkj readGcodeFilesForOrigin origin:%s" % origin )
-	print("lkj readGcodeFilesForOrigin files:%s" % str(files) )
+
 	if origin == FileDestinations.LOCAL:
-		return jsonify(files=files, free=util.getFreeBytes(settings().getBaseFolder("uploads")))
+		usage = psutil.disk_usage(settings().getBaseFolder("uploads"))
+		return jsonify(files=files, free=usage.free, total=usage.total)
 	elif origin == FileDestinations.FastbotSDCARD:
-		return jsonify(files=files, sdFree=util.getFreeBytes(fileManager._storage(origin).get_basefolder()))
+		usage = psutil.disk_usage(fileManager._storage(origin).get_basefolder())
+		return jsonify(files=files, free=usage.free, total=usage.total)		
 	else:
 		return jsonify(files=files)
 
@@ -119,7 +70,7 @@ def _getFileDetails(origin, filename):
 
 def _getFileList(origin, filter=None):
 	if origin == FileDestinations.SDCARD:
-		sdFileList = printer.getSdFiles()
+		sdFileList = printer.get_sd_files()
 
 		files = []
 		if sdFileList is not None:
@@ -141,19 +92,21 @@ def _getFileList(origin, filter=None):
 			filter_func = lambda entry, entry_data: octoprint.filemanager.valid_file_type(entry, type=filter)
 		files = fileManager.list_files(origin, filter=filter_func, recursive=False)[origin].values()
 		
+		
 		#lkj
 		new_files = []
 		for file in files:
 			if "name" in file and octoprint.filemanager.valid_file_type(file["name"], type="fbot"):
-				print("lkj delete 2 file name:%s" % file["name"])
+				print("lkj skip fbot file name:%s" % file["name"])
 			else:
 				new_files.append(file)
 		
 		files = new_files[0:len(new_files)]	
 		
-		print("files:%s" % (str(files)))		
+		#print("lkj files:%s" % (str(files)))		
+		
 		for file in files:
-			file["origin"] = origin		
+			file["origin"] = origin
 
 			if "analysis" in file and octoprint.filemanager.valid_file_type(file["name"], type="gcode"):
 				file["gcodeAnalysis"] = file["analysis"]
@@ -193,14 +146,13 @@ def _getFileList(origin, filter=None):
 			                # "download": url_for("index", _external=True) + "downloads/files/" + FileDestinations.LOCAL + "/" + file["name"]
 			                
 				}
-			                
 			})
 	return files
 
 
 def _verifyFileExists(origin, filename):
 	if origin == FileDestinations.SDCARD:
-		return filename in map(lambda x: x[0], printer.getSdFiles())
+		return filename in map(lambda x: x[0], printer.get_sd_files())
 	else:
 		return fileManager.file_exists(origin, filename)
 
@@ -222,13 +174,7 @@ def uploadFirmwareFile(target):
 	input_upload_path = input_name + "." + settings().get(["server", "uploads", "pathSuffix"])
 	if input_upload_name in request.values and input_upload_path in request.values:
 		print("lkj here 1")
-		import shutil
-		upload = util.Object()
-		upload.filename = request.values[input_upload_name]
-		upload.save = lambda new_path: shutil.move(request.values[input_upload_path], new_path)
-	elif input_name in request.files:
-		print("lkj here 2")
-		upload = request.files[input_name]
+		upload = octoprint.filemanager.util.DiskFileWrapper(request.values[input_upload_name], request.values[input_upload_path])
 	else:
 		return make_response("No file included", 400)
 	print("lkj post 2")
@@ -260,7 +206,7 @@ def uploadFirmwareFile(target):
 	r = make_response(jsonify(files=files, done=done), 201)
 	#lkj 
 	from octoprint.server import printer
-	if printer.isOperational():
+	if printer.is_operational():
 		#cmd = ("M205", param=added_file)
 		#printer.command()
 		pass
@@ -280,13 +226,7 @@ def upload_temp_curve_firmware(target):
 	input_upload_path = input_name + "." + settings().get(["server", "uploads", "pathSuffix"])
 	if input_upload_name in request.values and input_upload_path in request.values:
 		print("lkj here 1")
-		import shutil
-		upload = util.Object()
-		upload.filename = request.values[input_upload_name]
-		upload.save = lambda new_path: shutil.move(request.values[input_upload_path], new_path)
-	elif input_name in request.files:
-		print("lkj here 2")
-		upload = request.files[input_name]
+		upload = octoprint.filemanager.util.DiskFileWrapper(request.values[input_upload_name], request.values[input_upload_path])
 	else:
 		return make_response("No file included", 400)
 	print("lkj post 2")
@@ -332,12 +272,7 @@ def uploadFastBotSDCARD(target):
 	input_upload_name = input_name + "." + settings().get(["server", "uploads", "nameSuffix"])
 	input_upload_path = input_name + "." + settings().get(["server", "uploads", "pathSuffix"])
 	if input_upload_name in request.values and input_upload_path in request.values:
-		import shutil
-		upload = util.Object()
-		upload.filename = request.values[input_upload_name]
-		upload.save = lambda new_path: shutil.move(request.values[input_upload_path], new_path)
-	elif input_name in request.files:
-		upload = request.files[input_name]
+		upload = octoprint.filemanager.util.DiskFileWrapper(request.values[input_upload_name], request.values[input_upload_path])
 	else:
 		return make_response("No file included", 400)
 	
@@ -354,7 +289,7 @@ def uploadFastBotSDCARD(target):
 	# determine current job
 	currentFilename = None
 	currentOrigin = None
-	currentJob = printer.getCurrentJob()
+	currentJob = printer.get_current_job()
 	if currentJob is not None and "file" in currentJob.keys():
 		currentJobFile = currentJob["file"]
 		if "name" in currentJobFile.keys() and "origin" in currentJobFile.keys():
@@ -370,7 +305,7 @@ def uploadFastBotSDCARD(target):
 		return make_response("Can not upload file %s, wrong format?" % upload.filename, 415)
 	print("lkj uploadGcodeFile 4")
 	# prohibit overwriting currently selected file while it's being printed
-	if futureFilename == currentFilename and target == currentOrigin and printer.isPrinting() or printer.isPaused():
+	if futureFilename == currentFilename and target == currentOrigin and printer.is_printing() or printer.is_paused():
 		return make_response("Trying to overwrite file that is currently being printed: %s" % currentFilename, 409)
 	print("lkj uploadGcodeFile 5")
 	def fileProcessingFinished(filename, absFilename, destination):
@@ -393,7 +328,7 @@ def uploadFastBotSDCARD(target):
 		exact file is already selected, such reloading it.
 		"""
 		if octoprint.filemanager.valid_file_type(added_file, "gcode") and (selectAfterUpload or printAfterSelect or (currentFilename == filename and currentOrigin == destination)):
-			printer.selectFile(absFilename, destination == FileDestinations.FastbotSDCARD, printAfterSelect)
+			printer.select_file(absFilename, destination == FileDestinations.FastbotSDCARD, printAfterSelect)
 	print("lkj uploadGcodeFile 6")		
 	added_file = fileManager.add_file(FileDestinations.FastbotSDCARD, upload.filename, upload, allow_overwrite=True)
 	if added_file is None:
@@ -405,7 +340,7 @@ def uploadFastBotSDCARD(target):
 		done = True
 		print("lkj uploadGcodeFile 6.1")
 	else:
-		filename = fileProcessingFinished(added_file, fileManager.get_absolute_path(FileDestinations.FastbotSDCARD, added_file), target)
+		filename = fileProcessingFinished(added_file, fileManager.path_on_disk(FileDestinations.FastbotSDCARD, added_file), target)
 		done = True
 
 	sdFilename = filename
@@ -448,7 +383,6 @@ def uploadFastBotSDCARD(target):
 @api.route("/files/<string:target>", methods=["POST"])
 @restricted_access
 def uploadGcodeFile(target):
-	print("lkj uploadGcodeFile target:%s" % str(target))
 	if target in ["extruder1", "extruder2", "bed"] :
 		return upload_temp_curve_firmware(target)
 	
@@ -457,7 +391,6 @@ def uploadGcodeFile(target):
 	
 	if target == FileDestinations.FastbotSDCARD :		
 		return uploadFastBotSDCARD(target)	
-		
 	if not target in [FileDestinations.LOCAL, FileDestinations.SDCARD]:
 		return make_response("Unknown target: %s" % target, 404)
 
@@ -465,14 +398,18 @@ def uploadGcodeFile(target):
 	input_upload_name = input_name + "." + settings().get(["server", "uploads", "nameSuffix"])
 	input_upload_path = input_name + "." + settings().get(["server", "uploads", "pathSuffix"])
 	if input_upload_name in request.values and input_upload_path in request.values:
-		import shutil
-		upload = util.Object()
-		upload.filename = request.values[input_upload_name]
-		upload.save = lambda new_path: shutil.move(request.values[input_upload_path], new_path)
-	elif input_name in request.files:
-		upload = request.files[input_name]
+		upload = octoprint.filemanager.util.DiskFileWrapper(request.values[input_upload_name], request.values[input_upload_path])
 	else:
 		return make_response("No file included", 400)
+
+	# Store any additional user data the caller may have passed.
+	userdata = None
+	if "userdata" in request.values:
+		import json
+		try:
+			userdata = json.loads(request.values["userdata"])
+		except:
+			return make_response("userdata contains invalid JSON", 400)
 
 	if target == FileDestinations.SDCARD and not settings().getBoolean(["feature", "sdSupport"]):
 		return make_response("SD card support is disabled", 404)
@@ -483,15 +420,15 @@ def uploadGcodeFile(target):
 
 	if sd:
 		# validate that all preconditions for SD upload are met before attempting it
-		if not (printer.isOperational() and not (printer.isPrinting() or printer.isPaused())):
+		if not (printer.is_operational() and not (printer.is_printing() or printer.is_paused())):
 			return make_response("Can not upload to SD card, printer is either not operational or already busy", 409)
-		if not printer.isSdReady():
+		if not printer.is_sd_ready():
 			return make_response("Can not upload to SD card, not yet initialized", 409)
 
 	# determine current job
 	currentFilename = None
 	currentOrigin = None
-	currentJob = printer.getCurrentJob()
+	currentJob = printer.get_current_job()
 	if currentJob is not None and "file" in currentJob.keys():
 		currentJobFile = currentJob["file"]
 		if "name" in currentJobFile.keys() and "origin" in currentJobFile.keys():
@@ -503,11 +440,11 @@ def uploadGcodeFile(target):
 		futureFilename = fileManager.sanitize_name(FileDestinations.LOCAL, upload.filename)
 	except:
 		futureFilename = None
-	if futureFilename is None or not (slicingManager.slicing_enabled or octoprint.filemanager.valid_file_type(futureFilename, type="gcode")):
+	if futureFilename is None:
 		return make_response("Can not upload file %s, wrong format?" % upload.filename, 415)
 
 	# prohibit overwriting currently selected file while it's being printed
-	if futureFilename == currentFilename and target == currentOrigin and printer.isPrinting() or printer.isPaused():
+	if futureFilename == currentFilename and target == currentOrigin and printer.is_printing() or printer.is_paused():
 		return make_response("Trying to overwrite file that is currently being printed: %s" % currentFilename, 409)
 
 	def fileProcessingFinished(filename, absFilename, destination):
@@ -519,7 +456,7 @@ def uploadGcodeFile(target):
 		"""
 
 		if destination == FileDestinations.SDCARD and octoprint.filemanager.valid_file_type(filename, "gcode"):
-			return filename, printer.addSdFile(filename, absFilename, selectAndOrPrint)
+			return filename, printer.add_sd_file(filename, absFilename, selectAndOrPrint)
 		else:
 			selectAndOrPrint(filename, absFilename, destination)
 			return filename
@@ -534,7 +471,7 @@ def uploadGcodeFile(target):
 		exact file is already selected, such reloading it.
 		"""
 		if octoprint.filemanager.valid_file_type(added_file, "gcode") and (selectAfterUpload or printAfterSelect or (currentFilename == filename and currentOrigin == destination)):
-			printer.selectFile(absFilename, destination == FileDestinations.SDCARD, printAfterSelect)
+			printer.select_file(absFilename, destination == FileDestinations.SDCARD, printAfterSelect)
 
 	added_file = fileManager.add_file(FileDestinations.LOCAL, upload.filename, upload, allow_overwrite=True)
 	if added_file is None:
@@ -543,8 +480,12 @@ def uploadGcodeFile(target):
 		filename = added_file
 		done = True
 	else:
-		filename = fileProcessingFinished(added_file, fileManager.get_absolute_path(FileDestinations.LOCAL, added_file), target)
+		filename = fileProcessingFinished(added_file, fileManager.path_on_disk(FileDestinations.LOCAL, added_file), target)
 		done = True
+
+	if userdata is not None:
+		# upload included userdata, add this now to the metadata
+		fileManager.set_additional_metadata(FileDestinations.LOCAL, added_file, "userdata", userdata)
 
 	sdFilename = None
 	if isinstance(filename, tuple):
@@ -596,59 +537,61 @@ def readGcodeFile(target, filename):
 
 @api.route("/files/<string:target>/<path:filename>", methods=["POST"])
 @restricted_access
-def gcodeFileCommand(filename, target):
-	
+def gcodeFileCommand(filename, target):	
 	if not target in [FileDestinations.LOCAL, FileDestinations.SDCARD, FileDestinations.FastbotSDCARD]:
 		return make_response("Unknown target: %s" % target, 404)
 
 	if not _verifyFileExists(target, filename):
 		return make_response("File not found on '%s': %s" % (target, filename), 404)
-
 	# valid file commands, dict mapping command name to mandatory parameters
 	valid_commands = {
 		"select": [],
 		"slice": []
 	}
-
-	command, data, response = util.getJsonCommandFromRequest(request, valid_commands)
+	command, data, response = get_json_command_from_request(request, valid_commands)
 	if response is not None:
 		return response
-
 	if command == "select":
 		# selects/loads a file
 		printAfterLoading = False
 		if "print" in data.keys() and data["print"] in valid_boolean_trues:
-			if not printer.isOperational():
+			if not printer.is_operational():
 				return make_response("Printer is not operational, cannot directly start printing", 409)
 			printAfterLoading = True
 
+		sd = False
 		if target == FileDestinations.SDCARD:
 			filenameToSelect = filename
+			sd = True
 		else:
-			filenameToSelect = fileManager.get_absolute_path(target, filename)
-		printer.selectFile(filenameToSelect, target, printAfterLoading)
+			filenameToSelect = fileManager.path_on_disk(target, filename)
+		#lkj printer.select_file(filenameToSelect, sd, printAfterLoading)
+		printer.select_file(filenameToSelect, target, printAfterLoading)
 
 	elif command == "slice":
-		if "slicer" in data.keys():
-			slicer = data["slicer"]
-			del data["slicer"]
-			if not slicer in slicingManager.registered_slicers:
-				return make_response("Slicer {slicer} is not available".format(**locals()), 400)
-			slicer_instance = slicingManager.get_slicer(slicer)
-		elif "cura" in slicingManager.registered_slicers:
-			slicer = "cura"
-			slicer_instance = slicingManager.get_slicer("cura")
-		else:
-			return make_response("Cannot slice {filename}, no slicer available".format(**locals()), 415)
+		try:
+			if "slicer" in data:
+				slicer = data["slicer"]
+				del data["slicer"]
+				slicer_instance = slicingManager.get_slicer(slicer)
+
+			elif "cura" in slicingManager.registered_slicers:
+				slicer = "cura"
+				slicer_instance = slicingManager.get_slicer("cura")
+
+			else:
+				return make_response("Cannot slice {filename}, no slicer available".format(**locals()), 415)
+		except octoprint.slicing.UnknownSlicer as e:
+			return make_response("Slicer {slicer} is not available".format(slicer=e.slicer), 400)
 
 		if not octoprint.filemanager.valid_file_type(filename, type="stl"):
 			return make_response("Cannot slice {filename}, not an STL file".format(**locals()), 415)
 
-		if slicer_instance.get_slicer_properties()["same_device"] and (printer.isPrinting() or printer.isPaused()):
+		if slicer_instance.get_slicer_properties()["same_device"] and (printer.is_printing() or printer.is_paused()):
 			# slicer runs on same device as OctoPrint, slicing while printing is hence disabled
 			return make_response("Cannot slice on {slicer} while printing due to performance reasons".format(**locals()), 409)
 
-		if "gcode" in data.keys() and data["gcode"]:
+		if "gcode" in data and data["gcode"]:
 			gcode_name = data["gcode"]
 			del data["gcode"]
 		else:
@@ -658,7 +601,7 @@ def gcodeFileCommand(filename, target):
 
 		# prohibit overwriting the file that is currently being printed
 		currentOrigin, currentFilename = _getCurrentFile()
-		if currentFilename == gcode_name and currentOrigin == target and (printer.isPrinting() or printer.isPaused()):
+		if currentFilename == gcode_name and currentOrigin == target and (printer.is_printing() or printer.is_paused()):
 			make_response("Trying to slice into file that is currently being printed: %s" % gcode_name, 409)
 
 		if "profile" in data.keys() and data["profile"]:
@@ -681,13 +624,13 @@ def gcodeFileCommand(filename, target):
 
 		select_after_slicing = False
 		if "select" in data.keys() and data["select"] in valid_boolean_trues:
-			if not printer.isOperational():
+			if not printer.is_operational():
 				return make_response("Printer is not operational, cannot directly select for printing", 409)
 			select_after_slicing = True
 
 		print_after_slicing = False
 		if "print" in data.keys() and data["print"] in valid_boolean_trues:
-			if not printer.isOperational():
+			if not printer.is_operational():
 				return make_response("Printer is not operational, cannot directly start printing", 409)
 			select_after_slicing = print_after_slicing = True
 
@@ -703,34 +646,34 @@ def gcodeFileCommand(filename, target):
 					filenameToSelect = gcode_name
 					sd = True
 				else:
-					filenameToSelect = fileManager.get_absolute_path(target, gcode_name)
-				printer.selectFile(filenameToSelect, sd, print_after_slicing)
+					filenameToSelect = fileManager.path_on_disk(target, gcode_name)
+				printer.select_file(filenameToSelect, sd, print_after_slicing)
 
-		ok, result = fileManager.slice(slicer, target, filename, target, gcode_name,
-		                               profile=profile,
-		                               printer_profile_id=printerProfile,
-		                               position=position,
-		                               overrides=overrides,
-		                               callback=slicing_done,
-		                               callback_args=(target, gcode_name, select_after_slicing, print_after_slicing))
+		try:
+			fileManager.slice(slicer, target, filename, target, gcode_name,
+			                  profile=profile,
+			                  printer_profile_id=printerProfile,
+			                  position=position,
+			                  overrides=overrides,
+			                  callback=slicing_done,
+			                  callback_args=(target, gcode_name, select_after_slicing, print_after_slicing))
+		except octoprint.slicing.UnknownProfile:
+			return make_response("Profile {profile} doesn't exist".format(**locals()), 400)
 
-		if ok:
-			files = {}
-			location = url_for(".readGcodeFile", target=target, filename=gcode_name, _external=True)
-			result = {
-				"name": gcode_name,
-				"origin": FileDestinations.LOCAL,
-				"refs": {
-					"resource": location,
-					"download": url_for("index", _external=True) + "downloads/files/" + target + "/" + gcode_name
-				}
+		files = {}
+		location = url_for(".readGcodeFile", target=target, filename=gcode_name, _external=True)
+		result = {
+			"name": gcode_name,
+			"origin": FileDestinations.LOCAL,
+			"refs": {
+				"resource": location,
+				"download": url_for("index", _external=True) + "downloads/files/" + target + "/" + gcode_name
 			}
+		}
 
-			r = make_response(jsonify(result), 202)
-			r.headers["Location"] = location
-			return r
-		else:
-			return make_response("Could not slice: {result}".format(result=result), 500)
+		r = make_response(jsonify(result), 202)
+		r.headers["Location"] = location
+		return r
 
 	return NO_CONTENT
 
@@ -746,7 +689,7 @@ def deleteGcodeFile(filename, target):
 
 	# prohibit deleting files that are currently in use
 	currentOrigin, currentFilename = _getCurrentFile()
-	if currentFilename == filename and currentOrigin == target and (printer.isPrinting() or printer.isPaused()):
+	if currentFilename == filename and currentOrigin == target and (printer.is_printing() or printer.is_paused()):
 		make_response("Trying to delete file that is currently being printed: %s" % filename, 409)
 
 	if (target, filename) in fileManager.get_busy_files():
@@ -754,20 +697,48 @@ def deleteGcodeFile(filename, target):
 
 	# deselect the file if it's currently selected
 	if currentFilename is not None and filename == currentFilename:
-		printer.unselectFile()
+		printer.unselect_file()
 
 	# delete it
 	if target == FileDestinations.SDCARD:
-		printer.deleteSdFile(filename)
+		printer.delete_sd_file(filename)
 	else:
 		fileManager.remove_file(target, filename)
 
 	return NO_CONTENT
 
 def _getCurrentFile():
-	currentJob = printer.getCurrentJob()
+	currentJob = printer.get_current_job()
 	if currentJob is not None and "file" in currentJob.keys() and "name" in currentJob["file"] and "origin" in currentJob["file"]:
 		return currentJob["file"]["origin"], currentJob["file"]["name"]
 	else:
 		return None, None
 
+
+class WerkzeugFileWrapper(octoprint.filemanager.util.AbstractFileWrapper):
+	"""
+	A wrapper around a Werkzeug ``FileStorage`` object.
+
+	Arguments:
+	    file_obj (werkzeug.datastructures.FileStorage): The Werkzeug ``FileStorage`` instance to wrap.
+
+	.. seealso::
+
+	   `werkzeug.datastructures.FileStorage <http://werkzeug.pocoo.org/docs/0.10/datastructures/#werkzeug.datastructures.FileStorage>`_
+	        The documentation of Werkzeug's ``FileStorage`` class.
+	"""
+	def __init__(self, file_obj):
+		octoprint.filemanager.util.AbstractFileWrapper.__init__(self, file_obj.filename)
+		self.file_obj = file_obj
+
+	def save(self, path):
+		"""
+		Delegates to ``werkzeug.datastructures.FileStorage.save``
+		"""
+		self.file_obj.save(path)
+
+	def stream(self):
+		"""
+		Returns ``werkzeug.datastructures.FileStorage.stream``
+		"""
+		return self.file_obj.stream

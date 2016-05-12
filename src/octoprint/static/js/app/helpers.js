@@ -11,6 +11,7 @@ function ItemListHelper(listType, supportedSorting, supportedFilters, defaultSor
     self.searchFunction = undefined;
 
     self.allItems = [];
+    self.allSize = ko.observable(0);
 
     self.items = ko.observableArray([]);
     self.pageSize = ko.observable(filesPerPage);
@@ -27,6 +28,7 @@ function ItemListHelper(listType, supportedSorting, supportedFilters, defaultSor
 
     self.updateItems = function(items) {
         self.allItems = items;
+        self.allSize(items.length);
         self._updateItems();
     };
 
@@ -331,6 +333,34 @@ function formatSize(bytes) {
     return _.sprintf("%.1f%s", bytes, "TB");
 }
 
+function bytesFromSize(size) {
+    if (size == undefined || size.trim() == "") return undefined;
+
+    var parsed = size.match(/^([+]?[0-9]*\.?[0-9]+)(?:\s*)?(.*)$/);
+    var number = parsed[1];
+    var unit = parsed[2].trim();
+
+    if (unit == "") return parseFloat(number);
+
+    var units = {
+        b: 1,
+        byte: 1,
+        bytes: 1,
+        kb: 1024,
+        mb: Math.pow(1024, 2),
+        gb: Math.pow(1024, 3),
+        tb: Math.pow(1024, 4)
+    };
+    unit = unit.toLowerCase();
+
+    if (!units.hasOwnProperty(unit)) {
+        return undefined;
+    }
+
+    var factor = units[unit];
+    return number * factor;
+}
+
 function formatDuration(seconds) {
     if (!seconds) return "-";
     if (seconds < 0) return "00:00:00";
@@ -382,7 +412,8 @@ function cleanTemperature(temp) {
 }
 
 function formatTemperature(temp) {
-    if (!temp || temp < 10) return gettext("off");
+    //lkj if (!temp || temp < 10) return gettext("off");
+    if (!temp || temp < 1) return gettext("off");
     return _.sprintf("%.1f&deg;C", temp);
 }
 
@@ -431,3 +462,45 @@ function showOfflineOverlay(title, message, reconnectCallback) {
 function hideOfflineOverlay() {
     $("#offline_overlay").hide();
 }
+
+function showConfirmationDialog(message, onacknowledge) {
+    var confirmationDialog = $("#confirmation_dialog");
+    var confirmationDialogAck = $(".confirmation_dialog_acknowledge", confirmationDialog);
+
+    $(".confirmation_dialog_message", confirmationDialog).text(message);
+    confirmationDialogAck.unbind("click");
+    confirmationDialogAck.bind("click", function (e) {
+        e.preventDefault();
+        $("#confirmation_dialog").modal("hide");
+        onacknowledge(e);
+    });
+    confirmationDialog.modal("show");
+}
+
+function commentableLinesToArray(lines) {
+    return splitTextToArray(lines, "\n", true, function(item) {return !_.startsWith(item, "#")});
+}
+
+function splitTextToArray(text, sep, stripEmpty, filter) {
+    return _.filter(
+        _.map(
+            text.split(sep),
+            function(item) { return (item) ? item.trim() : ""; }
+        ),
+        function(item) { return (stripEmpty ? item : true) && (filter ? filter(item) : true); }
+    );
+}
+
+var sizeObservable = function(observable) {
+    return ko.computed({
+        read: function() {
+            return formatSize(observable());
+        },
+        write: function(value) {
+            var result = bytesFromSize(value);
+            if (result != undefined) {
+                observable(result);
+            }
+        }
+    })
+};

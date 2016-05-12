@@ -52,7 +52,7 @@ class FirmwareFastbot:
 	print("rebootSystem 0")
 	def rebootDelay():
 	    print("rebootSystem 4")
-	    self._executeSystemCommand("reboot")
+	    #self._executeSystemCommand("reboot")
 	
 	print("rebootSystem 1")
 	t=threading.Timer(delay, rebootDelay)

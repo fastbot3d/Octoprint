@@ -9,7 +9,7 @@ import logging
 import netaddr
 import sarge
 
-from flask import Blueprint, request, jsonify, abort, current_app, session, make_response
+from flask import Blueprint, request, jsonify, abort, current_app, session, make_response, g
 from flask.ext.login import login_user, logout_user, current_user
 from flask.ext.principal import Identity, identity_changed, AnonymousIdentity
 
@@ -19,8 +19,8 @@ import octoprint.server
 import octoprint.plugin
 from octoprint.server import admin_permission, NO_CONTENT
 from octoprint.settings import settings as s, valid_boolean_trues
-from octoprint.server.util import apiKeyRequestHandler, corsResponseHandler
-from octoprint.server.util.flask import restricted_access
+from octoprint.server.util import noCachingResponseHandler, apiKeyRequestHandler, corsResponseHandler
+from octoprint.server.util.flask import restricted_access, get_json_command_from_request, passive_login
 
 
 #~~ init api blueprint, including sub modules
@@ -37,9 +37,12 @@ from . import users as api_users
 from . import log as api_logs
 from . import slicing as api_slicing
 from . import printer_profiles as api_printer_profiles
+from . import languages as api_languages
 
 
 VERSION = "0.1"
+
+api.after_request(noCachingResponseHandler)
 
 api.before_request(apiKeyRequestHandler)
 api.after_request(corsResponseHandler)
@@ -48,11 +51,17 @@ api.after_request(corsResponseHandler)
 
 @api.route("/plugin/<string:name>", methods=["GET"])
 def pluginData(name):
-	api_plugins = octoprint.plugin.plugin_manager().get_implementations(octoprint.plugin.SimpleApiPlugin)
-	if not name in api_plugins:
+	api_plugins = octoprint.plugin.plugin_manager().get_filtered_implementations(lambda p: p._identifier == name, octoprint.plugin.SimpleApiPlugin)
+	if not api_plugins:
 		return make_response("Not found", 404)
 
-	api_plugin = api_plugins[name]
+	if len(api_plugins) > 1:
+		return make_response("More than one api provider registered for {name}, can't proceed".format(name=name), 500)
+
+	api_plugin = api_plugins[0]
+	if api_plugin.is_api_adminonly() and not current_user.is_admin():
+		return make_response("Forbidden", 403)
+
 	response = api_plugin.on_api_get(request)
 
 	if response is not None:
@@ -64,16 +73,23 @@ def pluginData(name):
 @api.route("/plugin/<string:name>", methods=["POST"])
 @restricted_access
 def pluginCommand(name):
-	api_plugins = octoprint.plugin.plugin_manager().get_implementations(octoprint.plugin.SimpleApiPlugin)
-	if not name in api_plugins:
+	api_plugins = octoprint.plugin.plugin_manager().get_filtered_implementations(lambda p: p._identifier == name, octoprint.plugin.SimpleApiPlugin)
+
+	if not api_plugins:
 		return make_response("Not found", 404)
 
-	api_plugin = api_plugins[name]
+	if len(api_plugins) > 1:
+		return make_response("More than one api provider registered for {name}, can't proceed".format(name=name), 500)
+
+	api_plugin = api_plugins[0]
 	valid_commands = api_plugin.get_api_commands()
 	if valid_commands is None:
 		return make_response("Method not allowed", 405)
 
-	command, data, response = util.getJsonCommandFromRequest(request, valid_commands)
+	if api_plugin.is_api_adminonly() and not current_user.is_admin():
+		return make_response("Forbidden", 403)
+
+	command, data, response = get_json_command_from_request(request, valid_commands)
 	if response is not None:
 		return response
 
@@ -138,22 +154,25 @@ def performSystemAction():
 		available_actions = s().get(["system", "actions"])
 		for availableAction in available_actions:
 			if availableAction["action"] == action:
+				async = availableAction["async"] if "async" in availableAction else False
+				ignore = availableAction["ignore"] if "ignore" in availableAction else False
 				logger.info("Performing command: %s" % availableAction["command"])
 				try:
-					# Note: we put the command in brackets since sarge (up to the most recently released version) has
-					# a bug concerning shell=True commands. Once sarge 0.1.4 we can upgrade to that and remove this
-					# workaround again
-					#
-					# See https://bitbucket.org/vinay.sajip/sarge/issue/21/behavior-is-not-like-popen-using-shell
-					p = sarge.run([availableAction["command"]], stderr=sarge.Capture(), shell=True)
-					if p.returncode != 0:
-						returncode = p.returncode
-						stderr_text = p.stderr.text
-						logger.warn("Command failed with return code %i: %s" % (returncode, stderr_text))
-						return make_response(("Command failed with return code %i: %s" % (returncode, stderr_text), 500, []))
+					# we run this with shell=True since we have to trust whatever
+					# our admin configured as command and since we want to allow
+					# shell-alike handling here...
+					p = sarge.run(availableAction["command"], stderr=sarge.Capture(), shell=True, async=async)
+					if not async:
+						if not ignore and p.returncode != 0:
+							returncode = p.returncode
+							stderr_text = p.stderr.text
+							logger.warn("Command failed with return code %i: %s" % (returncode, stderr_text))
+							return make_response(("Command failed with return code %i: %s" % (returncode, stderr_text), 500, []))
 				except Exception, e:
-					logger.warn("Command failed: %s" % e)
-					return make_response(("Command failed: %s" % e, 500, []))
+					if not ignore:
+						logger.warn("Command failed: %s" % e)
+						return make_response(("Command failed: %s" % e, 500, []))
+				break
 	return NO_CONTENT
 
 
@@ -180,40 +199,14 @@ def login():
 				if octoprint.server.userManager is not None:
 					user = octoprint.server.userManager.login_user(user)
 					session["usersession.id"] = user.get_session()
+					g.user = user
 				login_user(user, remember=remember)
 				identity_changed.send(current_app._get_current_object(), identity=Identity(user.get_id()))
 				return jsonify(user.asDict())
 		return make_response(("User unknown or password incorrect", 401, []))
 
-	elif "passive" in request.values.keys():
-		if octoprint.server.userManager is not None:
-			user = octoprint.server.userManager.login_user(current_user)
-		else:
-			user = current_user
-
-		if user is not None and not user.is_anonymous():
-			identity_changed.send(current_app._get_current_object(), identity=Identity(user.get_id()))
-			return jsonify(user.asDict())
-		elif s().getBoolean(["accessControl", "autologinLocal"]) \
-			and s().get(["accessControl", "autologinAs"]) is not None \
-			and s().get(["accessControl", "localNetworks"]) is not None:
-
-			autologinAs = s().get(["accessControl", "autologinAs"])
-			localNetworks = netaddr.IPSet([])
-			for ip in s().get(["accessControl", "localNetworks"]):
-				localNetworks.add(ip)
-
-			try:
-				remoteAddr = util.getRemoteAddress(request)
-				if netaddr.IPAddress(remoteAddr) in localNetworks:
-					user = octoprint.server.userManager.findUser(autologinAs)
-					if user is not None:
-						login_user(user)
-						identity_changed.send(current_app._get_current_object(), identity=Identity(user.get_id()))
-						return jsonify(user.asDict())
-			except:
-				logger = logging.getLogger(__name__)
-				logger.exception("Could not autologin user %s for networks %r" % (autologinAs, localNetworks))
+	elif "passive" in request.values:
+		return passive_login()
 	return NO_CONTENT
 
 

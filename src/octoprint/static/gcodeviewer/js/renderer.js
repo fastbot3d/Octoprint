@@ -14,6 +14,7 @@ GCODE.renderer = (function(){
     var gridStep=10;
     var ctxHeight, ctxWidth;
     var prevX=0, prevY=0;
+    var pixelRatio = window.devicePixelRatio || 1;
 
     var layerNumStore, progressStore={from: 0, to: -1};
     var lastX, lastY;
@@ -32,9 +33,9 @@ GCODE.renderer = (function(){
 
         showMoves: true,
         showRetracts: true,
-        extrusionWidth: 1,
+        extrusionWidth: 1 * pixelRatio,
         // #000000", "#45c7ba",  "#a9533a", "#ff44cc", "#dd1177", "#eeee22", "#ffbb55", "#ff5511", "#777788"
-        sizeRetractSpot: 2,
+        sizeRetractSpot: 2 * pixelRatio,
         modelCenter: {x: 0, y: 0},
         differentiateColors: true,
         showNextLayer: false,
@@ -136,6 +137,10 @@ GCODE.renderer = (function(){
         canvas = jqueryCanvas[0];
 
         ctx = canvas.getContext('2d');
+        canvas.style.height = canvas.height + "px";
+        canvas.style.width = canvas.width + "px";
+        canvas.height = canvas.height * pixelRatio;
+        canvas.width = canvas.width * pixelRatio;
         ctxHeight = canvas.height;
         ctxWidth = canvas.width;
         lastX = ctxWidth/2;
@@ -149,8 +154,8 @@ GCODE.renderer = (function(){
             document.body.style.mozUserSelect = document.body.style.webkitUserSelect = document.body.style.userSelect = 'none';
 
             // remember starting point of dragging gesture
-            lastX = event.offsetX || (event.pageX - canvas.offsetLeft);
-            lastY = event.offsetY || (event.pageY - canvas.offsetTop);
+            lastX = (event.offsetX || (event.pageX - canvas.offsetLeft)) * pixelRatio;
+            lastY = (event.offsetY || (event.pageY - canvas.offsetTop)) * pixelRatio;
             dragStart = ctx.transformedPoint(lastX, lastY);
 
             // not yet dragged anything
@@ -159,8 +164,8 @@ GCODE.renderer = (function(){
 
         canvas.addEventListener('mousemove', function(event){
             // save current mouse coordinates
-            lastX = event.offsetX || (event.pageX - canvas.offsetLeft);
-            lastY = event.offsetY || (event.pageY - canvas.offsetTop);
+            lastX = (event.offsetX || (event.pageX - canvas.offsetLeft)) * pixelRatio;
+            lastY = (event.offsetY || (event.pageY - canvas.offsetTop)) * pixelRatio;
 
             // mouse movement => dragged
             dragged = true;
@@ -258,38 +263,70 @@ GCODE.renderer = (function(){
     };
 
     var drawRectangularGrid = function() {
-        var i;
-        var width = renderOptions["bed"]["x"] * zoomFactor;
-        var height = renderOptions["bed"]["y"] * zoomFactor;
-        var origin = {
-            x: 0,
-            y: -1 * renderOptions["bed"]["y"] * zoomFactor
-        };
+        var x, y;
+        var width = renderOptions["bed"]["x"];
+        var height = renderOptions["bed"]["y"];
 
+        var minX, maxX, minY, maxY;
+        if (renderOptions["bed"]["centeredOrigin"]) {
+            var halfWidth = width / 2;
+            var halfHeight = height / 2;
+
+            minX = -halfWidth;
+            maxX = halfWidth;
+            minY = -halfHeight;
+            maxY = halfHeight;
+        } else {
+            minX = 0;
+            maxX = width;
+            minY = 0;
+            maxY = height;
+        }
+
+        //~ bed outline and origin
         ctx.beginPath();
         ctx.strokeStyle = renderOptions["colorGrid"];
         ctx.fillStyle = "#ffffff";
         ctx.lineWidth = 2;
 
-        ctx.rect(origin.x, origin.y, width, height);
+        // outline
+        ctx.rect(minX * zoomFactor, -1 * minY * zoomFactor, width * zoomFactor, -1 * height * zoomFactor);
 
+        // origin
+        ctx.moveTo(minX * zoomFactor, 0);
+        ctx.lineTo(maxX * zoomFactor, 0);
+        ctx.moveTo(0, -1 * minY * zoomFactor);
+        ctx.lineTo(0, -1 * maxY * zoomFactor);
+
+        // draw
         ctx.fill();
         ctx.stroke();
 
         ctx.strokeStyle = renderOptions["colorGrid"];
         ctx.lineWidth = 1;
 
+        //~~ grid starting from origin
         ctx.beginPath();
-        for (i = 0; i <= renderOptions["bed"]["x"]; i += gridStep) {
-            ctx.moveTo(i * zoomFactor, 0);
-            ctx.lineTo(i * zoomFactor, -1 * renderOptions["bed"]["y"] * zoomFactor);
+        for (x = 0; x <= maxX; x += gridStep) {
+            ctx.moveTo(x * zoomFactor, -1 * minY * zoomFactor);
+            ctx.lineTo(x * zoomFactor, -1 * maxY * zoomFactor);
+
+            if (renderOptions["bed"]["centeredOrigin"]) {
+                ctx.moveTo(-1 * x * zoomFactor, -1 * minY * zoomFactor);
+                ctx.lineTo(-1 * x * zoomFactor, -1 * maxY * zoomFactor);
+            }
         }
         ctx.stroke();
 
         ctx.beginPath();
-        for (i = 0; i <= renderOptions["bed"]["y"]; i += gridStep) {
-            ctx.moveTo(0, -1 * i * zoomFactor);
-            ctx.lineTo(renderOptions["bed"]["x"] * zoomFactor, -1 * i * zoomFactor);
+        for (y = 0; y <= maxY; y += gridStep) {
+            ctx.moveTo(minX * zoomFactor, -1 * y * zoomFactor);
+            ctx.lineTo(maxX * zoomFactor, -1 * y * zoomFactor);
+
+            if (renderOptions["bed"]["centeredOrigin"]) {
+                ctx.moveTo(minX * zoomFactor, y * zoomFactor);
+                ctx.lineTo(maxX * zoomFactor, y * zoomFactor);
+            }
         }
         ctx.stroke();
     };
@@ -342,7 +379,7 @@ GCODE.renderer = (function(){
     };
 
     var drawLayer = function(layerNum, fromProgress, toProgress, isNotCurrentLayer){
-        console.log("Drawing layer " + layerNum + " from " + fromProgress + " to " + toProgress + " (current: " + !isNotCurrentLayer + ")");
+        log.trace("Drawing layer " + layerNum + " from " + fromProgress + " to " + toProgress + " (current: " + !isNotCurrentLayer + ")");
 
         var i;
 
@@ -496,7 +533,7 @@ GCODE.renderer = (function(){
             offsetModelY = -1 * (renderOptions["bed"]["y"] / 2 - (mdlInfo.min.y + mdlInfo.modelSize.y / 2)) * zoomFactor;
             offsetBedX = -1 * (renderOptions["bed"]["x"] / 2 - (mdlInfo.min.x + mdlInfo.modelSize.x / 2)) * zoomFactor;
             offsetBedY = (renderOptions["bed"]["y"] / 2 - (mdlInfo.min.y + mdlInfo.modelSize.y / 2)) * zoomFactor;
-        } else if (renderOptions["bed"]["circular"]) {
+        } else if (renderOptions["bed"]["circular"] || renderOptions["bed"]["centeredOrigin"]) {
             canvasCenter = ctx.transformedPoint(canvas.width / 2, canvas.height / 2);
             offsetModelX = canvasCenter.x;
             offsetModelY = canvasCenter.y;

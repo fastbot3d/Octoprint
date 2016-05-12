@@ -6,7 +6,13 @@ function DataUpdater(allViewModels) {
     self._socket = undefined;
     self._autoReconnecting = false;
     self._autoReconnectTrial = 0;
-    self._autoReconnectTimeouts = [1, 1, 2, 3, 5, 8, 13, 20, 40, 100];
+    self._autoReconnectTimeouts = [0, 1, 1, 2, 3, 5, 8, 13, 20, 40, 100];
+    self._autoReconnectDialogIndex = 1;
+
+    self._pluginHash = undefined;
+
+    self.reloadOverlay = $("#reloadui_overlay");
+    $("#reloadui_overlay_reload").click(function() { location.reload(true); });
 
     self.connect = function() {
         var options = {};
@@ -21,6 +27,7 @@ function DataUpdater(allViewModels) {
     };
 
     self.reconnect = function() {
+        self._socket.close();
         delete self._socket;
         self.connect();
     };
@@ -30,33 +37,40 @@ function DataUpdater(allViewModels) {
         self._autoReconnectTrial = 0;
     };
 
-    self._onclose = function() {
-        var handled = false;
-        _.each(self.allViewModels, function(viewModel) {
-            if (handled == true) {
+    self._onclose = function(e) {
+        if (e.code == SOCKJS_CLOSE_NORMAL) {
+            return;
+        }
+        if (self._autoReconnectTrial >= self._autoReconnectDialogIndex) {
+            // Only consider it a real disconnect if the trial number has exceeded our threshold.
+
+            var handled = false;
+            _.each(self.allViewModels, function(viewModel) {
+                if (handled == true) {
+                    return;
+                }
+
+                if (viewModel.hasOwnProperty("onServerDisconnect")) {
+                    if (!viewModel.onServerDisconnect()) {
+                        handled = true;
+                    }
+                }
+            });
+
+            if (handled) {
                 return;
             }
 
-            if (viewModel.hasOwnProperty("onServerDisconnect")) {
-                if (!viewModel.onServerDisconnect()) {
-                    handled = true;
-                }
-            }
-        });
-
-        if (handled) {
-            return;
+            showOfflineOverlay(
+                gettext("Server is offline"),
+                gettext("The server appears to be offline, at least I'm not getting any response from it. I'll try to reconnect automatically <strong>over the next couple of minutes</strong>, however you are welcome to try a manual reconnect anytime using the button below."),
+                self.reconnect
+            );
         }
-
-        showOfflineOverlay(
-            gettext("Server is offline"),
-            gettext("The server appears to be offline, at least I'm not getting any response from it. I'll try to reconnect automatically <strong>over the next couple of minutes</strong>, however you are welcome to try a manual reconnect anytime using the button below."),
-            self.reconnect
-        );
 
         if (self._autoReconnectTrial < self._autoReconnectTimeouts.length) {
             var timeout = self._autoReconnectTimeouts[self._autoReconnectTrial];
-            console.log("Reconnect trial #" + self._autoReconnectTrial + ", waiting " + timeout + "s");
+            log.info("Reconnect trial #" + self._autoReconnectTrial + ", waiting " + timeout + "s");
             setTimeout(self.reconnect, timeout * 1000);
             self._autoReconnectTrial++;
         } else {
@@ -108,7 +122,11 @@ function DataUpdater(allViewModels) {
                     var oldVersion = VERSION;
                     VERSION = data["version"];
                     DISPLAY_VERSION = data["display_version"];
+                    BRANCH = data["branch"];
                     $("span.version").text(DISPLAY_VERSION);
+
+                    var oldPluginHash = self._pluginHash;
+                    self._pluginHash = data["plugin_hash"];
 
                     if ($("#offline_overlay").is(":visible")) {
                         hideOfflineOverlay();
@@ -123,13 +141,8 @@ function DataUpdater(allViewModels) {
                         }
                     }
 
-                    if (oldVersion != VERSION) {
-                        // version change detected, force reloading UI - use randomized delay to reduce server load in
-                        // the case of multiple clients
-                        var delay = 5 + Math.floor(Math.random() * 5) + 1;
-                        setTimeout(function() {location.reload(true);}, delay * 1000);
-
-                        // TODO notify about that, or show confirmation
+                    if (oldVersion != VERSION || (oldPluginHash != undefined && oldPluginHash != self._pluginHash)) {
+                        self.reloadOverlay.show();
                     }
 
                     break;
@@ -150,15 +163,6 @@ function DataUpdater(allViewModels) {
                     });
                     break;
                 }
-                //lkj 
-                /*case "fastbot": {
-                    _.each(self.allViewModels, function(viewModel) {
-                        if (viewModel.hasOwnProperty("fromFastBotData")) {
-                            viewModel.fromFastBotData(data);
-                        }
-                    });
-                    break;
-                }*/
                 case "slicingProgress": {
                     gcodeUploadProgressBar.text(_.sprintf(gettext("Slicing ... (%(percentage)d%%)"), {percentage: Math.round(data["progress"])}));
 
@@ -173,30 +177,42 @@ function DataUpdater(allViewModels) {
                     var type = data["type"];
                     var payload = data["payload"];
                     var html = "";
+                    var format = {};
 
-                    console.log("Got event " + type + " with payload: " + JSON.stringify(payload));
+                    log.debug("Got event " + type + " with payload: " + JSON.stringify(payload));
 
-                    if (type == "UpdatedFiles") {
-                        _.each(self.allViewModels, function(viewModel) {
-                            if (viewModel.hasOwnProperty("onUpdatedFiles")) {
-                                viewModel.onUpdatedFiles(payload);
-                            }
-                        });
-                    } else if (type == "MetadataAnalysisFinished") {
-                        _.each(self.allViewModels, function(viewModel) {
-                            if (viewModel.hasOwnProperty("onMetadataAnalysisFinished")) {
-                                viewModel.onMetadataAnalysisFinished(payload);
-                            }
-                        });
-                    } else if (type == "MovieRendering") {
+                    if (type == "MovieRendering") {
                         new PNotify({title: gettext("Rendering timelapse"), text: _.sprintf(gettext("Now rendering timelapse %(movie_basename)s"), payload)});
                     } else if (type == "MovieDone") {
                         new PNotify({title: gettext("Timelapse ready"), text: _.sprintf(gettext("New timelapse %(movie_basename)s is done rendering."), payload)});
-                        timelapseViewModel.requestData();
                     } else if (type == "MovieFailed") {
                         html = "<p>" + _.sprintf(gettext("Rendering of timelapse %(movie_basename)s failed with return code %(returncode)s"), payload) + "</p>";
                         html += pnotifyAdditionalInfo('<pre style="overflow: auto">' + payload.error + '</pre>');
-                        new PNotify({title: gettext("Rendering failed"), text: html, type: "error", hide: false});
+                        new PNotify({
+                            title: gettext("Rendering failed"),
+                            text: html,
+                            type: "error",
+                            hide: false
+                        });
+                    } else if (type == "PostRollStart") {
+                        var title = gettext("Capturing timelapse postroll");
+
+                        var text;
+                        if (!payload.postroll_duration) {
+                            text = _.sprintf(gettext("Now capturing timelapse post roll, this will take only a moment..."), format);
+                        } else {
+                            if (payload.postroll_duration > 60) {
+                                format = {duration: _.sprintf(gettext("%(minutes)d min"), {minutes: payload.postroll_duration / 60})};
+                            } else {
+                                format = {duration: _.sprintf(gettext("%(seconds)d sec"), {seconds: payload.postroll_duration})};
+                            }
+                            text = _.sprintf(gettext("Now capturing timelapse post roll, this will take approximately %(duration)s..."), format);
+                        }
+
+                        new PNotify({
+                            title: title,
+                            text: text
+                        });
                     } else if (type == "SlicingStarted") {
                         gcodeUploadProgress.addClass("progress-striped").addClass("active");
                         gcodeUploadProgressBar.css("width", "100%");
@@ -210,21 +226,10 @@ function DataUpdater(allViewModels) {
                         gcodeUploadProgressBar.css("width", "0%");
                         gcodeUploadProgressBar.text("");
                         new PNotify({title: gettext("Slicing done"), text: _.sprintf(gettext("Sliced %(stl)s to %(gcode)s, took %(time).2f seconds"), payload), type: "success"});
-
-                        _.each(self.allViewModels, function (viewModel) {
-                            if (viewModel.hasOwnProperty("onSlicingDone")) {
-                                viewModel.onSlicingDone(payload);
-                            }
-                        });
                     } else if (type == "SlicingCancelled") {
                         gcodeUploadProgress.removeClass("progress-striped").removeClass("active");
                         gcodeUploadProgressBar.css("width", "0%");
                         gcodeUploadProgressBar.text("");
-                        _.each(self.allViewModels, function (viewModel) {
-                            if (viewModel.hasOwnProperty("onSlicingCancelled")) {
-                                viewModel.onSlicingCancelled(payload);
-                            }
-                        });
                     } else if (type == "SlicingFailed") {
                         gcodeUploadProgress.removeClass("progress-striped").removeClass("active");
                         gcodeUploadProgressBar.css("width", "0%");
@@ -232,11 +237,6 @@ function DataUpdater(allViewModels) {
 
                         html = _.sprintf(gettext("Could not slice %(stl)s to %(gcode)s: %(reason)s"), payload);
                         new PNotify({title: gettext("Slicing failed"), text: html, type: "error", hide: false});
-                        _.each(self.allViewModels, function (viewModel) {
-                            if (viewModel.hasOwnProperty("onSlicingFailed")) {
-                                viewModel.onSlicingFailed(payload);
-                            }
-                        });
                     } else if (type == "TransferStarted") {
                         gcodeUploadProgress.addClass("progress-striped").addClass("active");
                         gcodeUploadProgressBar.css("width", "100%");
@@ -250,22 +250,34 @@ function DataUpdater(allViewModels) {
                             text: _.sprintf(gettext("Streamed %(local)s to %(remote)s on SD, took %(time).2f seconds"), payload),
                             type: "success"
                         });
-                        gcodeFilesViewModel.requestData(payload.remote, "sdcard");
                     } else if (type == "fastbot") { //lkj
-                        _.each(self.allViewModels, function (viewModel) {
-                            if (viewModel.hasOwnProperty("fromFastBotData")) {
-                                viewModel.fromFastBotData(data);
-                            }
-                        });
-                    }
-                    break;
-                }
-                case "feedbackCommandOutput": {
+                         _.each(self.allViewModels, function (viewModel) {
+                             if (viewModel.hasOwnProperty("fromFastBotData")) {
+                                 viewModel.fromFastBotData(data);
+                             }
+                         });
+                     }
+
+
+                    var legacyEventHandlers = {
+                        "UpdatedFiles": "onUpdatedFiles",
+                        "MetadataStatisticsUpdated": "onMetadataStatisticsUpdated",
+                        "MetadataAnalysisFinished": "onMetadataAnalysisFinished",
+                        "SlicingDone": "onSlicingDone",
+                        "SlicingCancelled": "onSlicingCancelled",
+                        "SlicingFailed": "onSlicingFailed"
+                    };
                     _.each(self.allViewModels, function(viewModel) {
-                        if (viewModel.hasOwnProperty("fromFeedbackCommandData")) {
-                            viewModel.fromFeedbackCommandData(data);
+                        if (viewModel.hasOwnProperty("onEvent" + type)) {
+                            viewModel["onEvent" + type](payload);
+                        } else if (legacyEventHandlers.hasOwnProperty(type) && viewModel.hasOwnProperty(legacyEventHandlers[type])) {
+                            // there might still be code that uses the old callbacks, make sure those still get called
+                            // but log a warning
+                            log.warn("View model " + viewModel.name + " is using legacy event handler " + legacyEventHandlers[type] + ", new handler is called " + legacyEventHandlers[type]);
+                            viewModel[legacyEventHandlers[type]](payload);
                         }
                     });
+
                     break;
                 }
                 case "timelapse": {

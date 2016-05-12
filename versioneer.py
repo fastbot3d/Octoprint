@@ -369,6 +369,17 @@ def versions_from_expanded_variables(variables, tag_prefix, verbose=False):
         tags = set([r for r in refs if re.search(r'\d', r)])
         if verbose:
             print("discarding '%%s', no digits" %% ",".join(refs-tags))
+
+    branches = [r for r in refs if not r.startswith(TAG) and r != "HEAD" and not r.startswith("refs/")]
+    if branches:
+        branch = branches[0]
+    else:
+        branch = "unknown"
+
+    if verbose:
+        print("likely tags: %s" % ",".join(sorted(tags)))
+        print("likely branches: %s" % ",".join(sorted(branches)))
+
     if verbose:
         print("likely tags: %%s" %% ",".join(sorted(tags)))
     for ref in sorted(tags):
@@ -378,12 +389,14 @@ def versions_from_expanded_variables(variables, tag_prefix, verbose=False):
             if verbose:
                 print("picking %%s" %% r)
             return { "version": r,
-                     "full": variables["full"].strip() }
+                     "full": variables["full"].strip(),
+                     "branch": branch}
     # no suitable tags, so we use the full revision id
     if verbose:
         print("no suitable tags, using full revision id")
     return { "version": variables["full"].strip(),
-             "full": variables["full"].strip() }
+             "full": variables["full"].strip(),
+             "branch": "unknown"}
 
 def versions_from_lookup(lookup, root, verbose=False):
     GITS = get_gits(root, verbose=verbose)
@@ -635,8 +648,17 @@ def versions_from_expanded_variables(variables, tag_prefix, verbose=False):
         tags = set([r for r in refs if re.search(r'\d', r)])
         if verbose:
             print("discarding '%s', no digits" % ",".join(refs-tags))
+
+    branches = [r for r in refs if not r.startswith(TAG) and r != "HEAD" and not r.startswith("refs/")]
+    if branches:
+        branch = branches[0]
+    else:
+        branch = "unknown"
+
     if verbose:
         print("likely tags: %s" % ",".join(sorted(tags)))
+        print("likely branches: %s" % ",".join(sorted(branches)))
+
     for ref in sorted(tags):
         # sorting will prefer e.g. "2.0" over "2.0rc1"
         if ref.startswith(tag_prefix):
@@ -644,13 +666,14 @@ def versions_from_expanded_variables(variables, tag_prefix, verbose=False):
             if verbose:
                 print("picking %s" % r)
             return { "version": r,
-                     "full": variables["full"].strip() }
+                     "full": variables["full"].strip(),
+                     "branch": branch }
     # no suitable tags, so we use the full revision id
     if verbose:
         print("no suitable tags, using full revision id")
     return { "version": variables["full"].strip(),
              "full": variables["full"].strip(),
-             "branch": ""}
+             "branch": "unknown"}
 
 
 def versions_from_lookup(lookup, root, verbose=False):
@@ -801,10 +824,8 @@ SHORT_VERSION_PY = """
 # of this file.
 
 version_version = '%(version)s'
-#lkjversion_full = '%(full)s'
-version_full = '1.2.0'
-#lkj version_branch = '%(branch)s'
-version_branch = 'branch'
+version_full = '%(full)s'
+version_branch = '%(branch)s'
 def get_versions(default={}, verbose=False):
     return {'version': version_version, 'full': version_full, 'branch': version_branch}
 

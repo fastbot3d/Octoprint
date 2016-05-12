@@ -1,3 +1,7 @@
+import os, struct, sys, time
+
+from serial import Serial
+
 import chipDB
 
 class IspBase():

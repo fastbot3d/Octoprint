@@ -8,16 +8,16 @@ __copyright__ = "Copyright (C) 2014 The OctoPrint Project - Released under terms
 from flask import request, jsonify, make_response
 
 from octoprint.settings import settings
-from octoprint.printer import getConnectionOptions
+from octoprint.printer import get_connection_options
 from octoprint.server import printer, printerProfileManager, NO_CONTENT
 from octoprint.server.api import api
-from octoprint.server.util.flask import restricted_access
+from octoprint.server.util.flask import restricted_access, get_json_command_from_request
 import octoprint.util as util
 
 
 @api.route("/connection", methods=["GET"])
 def connectionState():
-	state, port, baudrate, printer_profile = printer.getCurrentConnection()
+	state, port, baudrate, printer_profile = printer.get_current_connection()
 	current = {
 		"state": state,
 		"port": port,
@@ -33,26 +33,26 @@ def connectionState():
 def connectionCommand():
 	valid_commands = {
 		"connect": [],
-		"disconnect": []
+		"disconnect": [],
+		"fake_ack": []
 	}
 
-	command, data, response = util.getJsonCommandFromRequest(request, valid_commands)
+	command, data, response = get_json_command_from_request(request, valid_commands)
 	if response is not None:
 		return response
 
 	if command == "connect":
-		connection_options = getConnectionOptions()
-
+		connection_options = get_connection_options()
 		port = None
 		baudrate = None
 		printerProfile = None
 		if "port" in data.keys():
 			port = data["port"]
-			if port not in connection_options["ports"]:
+			if port not in connection_options["ports"] and port != "AUTO":
 				return make_response("Invalid port: %s" % port, 400)
 		if "baudrate" in data.keys():
 			baudrate = data["baudrate"]
-			if baudrate not in connection_options["baudrates"]:
+			if baudrate not in connection_options["baudrates"] and baudrate != 0:
 				return make_response("Invalid baudrate: %d" % baudrate, 400)
 		if "printerProfile" in data.keys():
 			printerProfile = data["printerProfile"]
@@ -65,14 +65,16 @@ def connectionCommand():
 		if "autoconnect" in data.keys():
 			settings().setBoolean(["serial", "autoconnect"], data["autoconnect"])
 		settings().save()
-		printer.connect(transport_option_overrides=dict(port=port, baudrate=baudrate), profile=printerProfile)
+		printer.connect(port=port, baudrate=baudrate, profile=printerProfile)
 	elif command == "disconnect":
 		printer.disconnect()
+	elif command == "fake_ack":
+		printer.fake_ack()
 
 	return NO_CONTENT
 
 def _get_options():
-	connection_options = getConnectionOptions()
+	connection_options = get_connection_options()
 	profile_options = printerProfileManager.get_all()
 	default_profile = printerProfileManager.get_default()
 

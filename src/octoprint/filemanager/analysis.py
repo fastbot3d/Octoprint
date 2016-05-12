@@ -11,6 +11,7 @@ import Queue as queue
 import os
 import threading
 import collections
+import time
 
 from octoprint.events import Events, eventManager
 
@@ -18,11 +19,40 @@ import octoprint.util.gcodeInterpreter as gcodeInterpreter
 
 
 class QueueEntry(collections.namedtuple("QueueEntry", "path, type, location, absolute_path, printer_profile")):
+	"""
+	A :class:`QueueEntry` for processing through the :class:`AnalysisQueue`. Wraps the entry's properties necessary
+	for processing.
+
+	Arguments:
+	    path (str): Storage location specific path to the file to analyze.
+	    type (str): Type of file to analyze, necessary to map to the correct :class:`AbstractAnalysisQueue` sub class.
+	        At the moment, only ``gcode`` is supported here.
+	    location (str): Location the file is located on.
+	    absolute_path (str): Absolute path on disk through which to access the file.
+	    printer_profile (PrinterProfile): :class:`PrinterProfile` which to use for analysis.
+	"""
+
 	def __str__(self):
 		return "{location}:{path}".format(location=self.location, path=self.path)
 
 
 class AnalysisQueue(object):
+	"""
+	OctoPrint's :class:`AnalysisQueue` can manage various :class:`AbstractAnalysisQueue` implementations, mapped
+	by their machine code type.
+
+	At the moment, only the analysis of GCODE files for 3D printing is supported, through :class:`GcodeAnalysisQueue`.
+
+	By invoking :meth:`register_finish_callback` it is possible to register oneself as a callback to be invoked each
+	time the analysis of a queue entry finishes. The call parameters will be the finished queue entry as the first
+	and the analysis result as the second parameter. It is also possible to remove the registration again by invoking
+	:meth:`unregister_finish_callback`.
+
+	:meth:`enqueue` allows enqueuing :class:`QueueEntry` instances to analyze. If the :attr:`QueueEntry.type` is unknown
+	(no specific child class of :class:`AbstractAnalysisQueue` is registered for it), nothing will happen. Otherwise the
+	entry will be enqueued with the type specific analysis queue.
+	"""
+
 	def __init__(self):
 		self._logger = logging.getLogger(__name__)
 		self._callbacks = []
@@ -56,6 +86,24 @@ class AnalysisQueue(object):
 		eventManager().fire(Events.METADATA_ANALYSIS_FINISHED, {"file": entry.path, "result": result})
 
 class AbstractAnalysisQueue(object):
+	"""
+	The :class:`AbstractAnalysisQueue` is the parent class of all specific analysis queues such as the
+	:class:`GcodeAnalysisQueue`. It offers methods to enqueue new entries to analyze and pausing and resuming analysis
+	processing.
+
+	Arguments:
+	    finished_callback (callable): Callback that will be called upon finishing analysis of an entry in the queue.
+	        The callback will be called with the analyzed entry as the first argument and the analysis result as
+	        returned from the queue implementation as the second parameter.
+
+	.. automethod:: _do_analysis
+
+	.. automethod:: _do_abort
+	"""
+
+	LOW_PRIO = 0
+	HIGH_PRIO = 100
+
 	def __init__(self, finished_callback):
 		self._logger = logging.getLogger(__name__)
 
@@ -75,16 +123,32 @@ class AbstractAnalysisQueue(object):
 		self._worker.start()
 
 	def enqueue(self, entry, high_priority=False):
+		"""
+		Enqueues an ``entry`` for analysis by the queue.
+
+		If ``high_priority`` is True (defaults to False), the entry will be prioritized and hence processed before
+		other entries in the queue with normal priority.
+
+		Arguments:
+		    entry (QueueEntry): The :class:`QueueEntry` to analyze.
+		    high_priority (boolean): Whether to process the provided entry with high priority (True) or not
+		        (False, default)
+		"""
+
 		if high_priority:
 			self._logger.debug("Adding entry {entry} to analysis queue with high priority".format(entry=entry))
-			prio = 0
+			prio = self.__class__.HIGH_PRIO
 		else:
 			self._logger.debug("Adding entry {entry} to analysis queue with low priority".format(entry=entry))
-			prio = 100
+			prio = self.__class__.LOW_PRIO
 
 		self._queue.put((prio, entry))
 
 	def pause(self):
+		"""
+		Pauses processing of the queue, e.g. when a print is active.
+		"""
+
 		self._logger.debug("Pausing analysis")
 		self._active.clear()
 		if self._current is not None:
@@ -92,6 +156,10 @@ class AbstractAnalysisQueue(object):
 			self._do_abort()
 
 	def resume(self):
+		"""
+		Resumes processing of the queue, e.g. when a print has finished.
+		"""
+
 		self._logger.debug("Resuming analyzer")
 		self._active.set()
 
@@ -109,13 +177,15 @@ class AbstractAnalysisQueue(object):
 			self._active.wait()
 
 			try:
-				self._analyze(entry)
+				self._analyze(entry, high_priority=(priority == self.__class__.HIGH_PRIO))
 				self._queue.task_done()
 			except gcodeInterpreter.AnalysisAborted:
 				aborted = entry
 				self._logger.debug("Running analysis of entry {entry} aborted".format(**locals()))
+			else:
+				time.sleep(1.0)
 
-	def _analyze(self, entry):
+	def _analyze(self, entry, high_priority=False):
 		path = entry.absolute_path
 		if path is None or not os.path.exists(path):
 			return
@@ -124,28 +194,70 @@ class AbstractAnalysisQueue(object):
 		self._current_progress = 0
 
 		try:
-			self._logger.debug("Starting analysis of {entry}".format(**locals()))
+			self._logger.info("Starting analysis of {entry}".format(**locals()))
 			eventManager().fire(Events.METADATA_ANALYSIS_STARTED, {"file": entry.path, "type": entry.type})
-			result = self._do_analysis()
+			try:
+				result = self._do_analysis(high_priority=high_priority)
+			except TypeError:
+				result = self._do_analysis()
 			self._logger.debug("Analysis of entry {entry} finished, notifying callback".format(**locals()))
 			self._finished_callback(self._current, result)
 		finally:
 			self._current = None
 			self._current_progress = None
 
-	def _do_analysis(self):
+	def _do_analysis(self, high_priority=False):
+		"""
+		Performs the actual analysis of the current entry which can be accessed via ``self._current``. Needs to be
+		overridden by sub classes.
+
+		Arguments:
+		    high_priority (bool): Whether the current entry has high priority or not.
+
+		Returns:
+		    object: The result of the analysis which will be forwarded to the ``finished_callback`` provided during
+		        construction.
+		"""
 		return None
 
 	def _do_abort(self):
+		"""
+		Aborts analysis of the current entry. Needs to be overridden by sub classes.
+		"""
 		pass
 
 
 class GcodeAnalysisQueue(AbstractAnalysisQueue):
+	"""
+	A queue to analyze GCODE files. Analysis results are :class:`dict` instances structured as follows:
 
-	def _do_analysis(self):
+	.. list-table::
+	   :widths: 25 70
+
+	   - * **Key**
+	     * **Description**
+	   - * ``estimatedPrintTime``
+	     * Estimated time the file take to print, in minutes
+	   - * ``filament``
+	     * Substructure describing estimated filament usage. Keys are ``tool0`` for the first extruder, ``tool1`` for
+	       the second and so on. For each tool extruded length and volume (based on diameter) are provided.
+	   - * ``filament.toolX.length``
+	     * The extruded length in mm
+	   - * ``filament.toolX.volume``
+	     * The extruded volume in cm³
+	"""
+
+	def _do_analysis(self, high_priority=False):
 		try:
+			def throttle():
+				time.sleep(0.01)
+
+			throttle_callback = throttle
+			if high_priority:
+				throttle_callback = None
+
 			self._gcode = gcodeInterpreter.gcode()
-			self._gcode.load(self._current.absolute_path, self._current.printer_profile)
+			self._gcode.load(self._current.absolute_path, self._current.printer_profile, throttle=throttle_callback)
 
 			result = dict()
 			if self._gcode.totalMoveTimeMinute:

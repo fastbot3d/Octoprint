@@ -10,9 +10,14 @@ from flask import Blueprint, request, make_response, jsonify
 
 import octoprint.server
 import octoprint.plugin
+
+from octoprint.server.util import noCachingResponseHandler, corsResponseHandler
 from octoprint.settings import settings as s
 
 apps = Blueprint("apps", __name__)
+
+apps.after_request(noCachingResponseHandler)
+apps.after_request(corsResponseHandler)
 
 @apps.route("/auth", methods=["GET"])
 def getSessionKey():
@@ -86,9 +91,15 @@ def _get_registered_apps():
 		if not "enabled" in app_data:
 			apps[app]["enabled"] = True
 
-	app_plugins = octoprint.server.pluginManager.get_implementations(octoprint.plugin.AppPlugin)
-	for name, plugin in app_plugins.items():
-		additional_apps = plugin.get_additional_apps()
+	hooks = octoprint.server.pluginManager.get_hooks("octoprint.accesscontrol.appkey")
+	for name, hook in hooks.items():
+		try:
+			additional_apps = hook()
+		except:
+			import logging
+			logging.getLogger(__name__).exception("Error while retrieving additional appkeys from plugin {name}".format(**locals()))
+			continue
+
 		any_version_enabled = dict()
 
 		for app_data in additional_apps:
@@ -118,3 +129,7 @@ def _get_registered_apps():
 
 	__registered_apps = apps
 	return apps
+
+def clear_registered_app():
+	global __registered_apps
+	__registered_apps = None
